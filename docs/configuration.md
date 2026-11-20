@@ -41,7 +41,7 @@ For sign-in settings, see [Deploying to AWS → Sign-in](deployment.md#sign-in).
 
 | Variable | Default | Change it when |
 | --- | --- | --- |
-| `CODEKB_REQUIRE_AUTHENTICATION` | `true` | Only `false` for a [local evaluation](local.md). See [Security](security.md#sign-in) |
+| `CODEKB_REQUIRE_AUTHENTICATION` | `true` | Only `false` for a [local setup](local.md). See [Security](security.md#sign-in) |
 | `CODEKB_REQUIRE_AUTHORIZATION` | `true` | `false` lets every signed-in user open every space. See [Security](security.md#space-authorization) |
 | `CODEKB_GIT_CREDENTIALS_PROVIDERS` | `github` | Add `gitlab` or `bitbucket`, or set `NONE` for public repositories only. Any other value stops startup |
 | `CODEKB_GITHUB_CUSTOM_HOST`, `CODEKB_GITLAB_CUSTOM_HOST`, `CODEKB_BITBUCKET_CUSTOM_HOST` | unset | You run your own Git server, e.g. `https://github.example.com`. Add its host to `CODEKB_ALLOWED_GIT_HOSTS` too |

@@ -21,7 +21,7 @@ workspaces:
 }
 ```
 
-For a [local evaluation](local.md), use `http://localhost:8000/mcp/mcp`. Other
+For a [local setup](local.md), use `http://localhost:8000/mcp/mcp`. Other
 clients use the same URL; see their documentation for where the configuration
 lives. Restart or reload the client after saving.
 

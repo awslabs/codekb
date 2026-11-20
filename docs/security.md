@@ -25,7 +25,7 @@ With `CODEKB_REQUIRE_AUTHENTICATION=false`, requests are accepted without
 verification. CodeKB takes identity from an unsigned bearer token, an unverified
 `X-User-Identity` header, or a shared `local-dev` identity when neither is present.
 Anyone who can reach the port can therefore choose another identity and act as
-that user. Use this mode only for a [local evaluation](local.md) published on
+that user. Use this mode only for a [local setup](local.md) published on
 `127.0.0.1`.
 
 CodeKB doesn't terminate TLS or provide a general request-rate limiter. The
