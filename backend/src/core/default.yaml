@@ -1,0 +1,513 @@
+# Code Knowledge Base — Default Configuration
+#
+# This file provides sensible defaults for all config keys the application
+# reads via get_config(). Every value here can be overridden by a CODEKB_*
+# environment variable (see _ENV_OVERRIDES in config.py) or a .env file.
+#
+# Deployments:
+#   AWS (ECS/CDK)   — env vars set in service-stack.ts
+#   Docker image    — env vars set in .env file
+#   Local dev       — env vars set in shell or .env in repo root
+
+# Logging
+logging:
+  level: INFO
+  # At DEBUG, full API and AWS SDK payloads are logged and the
+  # botocore/boto3/httpx/strands loggers join in.
+  # Cap per-payload size (characters). 0 = unlimited. Override: CODEKB_LOG_PAYLOAD_MAX.
+  payload_max_chars: 4000
+
+# Analysis — language support and file filtering
+analysis:
+  supported_languages:
+    python:
+      extensions: [".py"]
+      parser: "tree-sitter-python"
+    javascript:
+      extensions: [".js", ".jsx", ".mjs", ".cjs"]
+      parser: "tree-sitter-javascript"
+    typescript:
+      extensions: [".ts", ".tsx"]
+      parser: "tree-sitter-typescript"
+    java:
+      extensions: [".java"]
+      parser: "tree-sitter-java"
+    kotlin:
+      extensions: [".kt", ".kts"]
+      parser: "tree-sitter-kotlin"
+    go:
+      extensions: [".go"]
+      parser: "tree-sitter-go"
+    rust:
+      extensions: [".rs"]
+      parser: "tree-sitter-rust"
+    cpp:
+      extensions: [".cpp", ".cc", ".cxx", ".c++", ".hpp", ".hh", ".hxx", ".h++", ".h"]
+      parser: "tree-sitter-cpp"
+    c:
+      extensions: [".c"]
+      parser: "tree-sitter-c"
+    csharp:
+      extensions: [".cs"]
+      parser: "tree-sitter-c-sharp"
+    php:
+      extensions: [".php"]
+      parser: "tree-sitter-php"
+    ruby:
+      extensions: [".rb", ".rake", ".gemspec"]
+      parser: "tree-sitter-ruby"
+    terraform:
+      extensions: [".tf"]
+      parser: "tree-sitter-hcl"
+    dart:
+      extensions: [".dart"]
+      parser: "tree-sitter-dart"
+      generated_file_patterns:
+        - "*.g.dart"
+        - "*.freezed.dart"
+        - "*.gr.dart"
+        - "*.mocks.dart"
+
+  # Languages CodeKB does not yet support. Tracked so we can report "skipped N
+  # Swift/Scala/... files" rather than silently ignoring them.
+  unsupported_languages:
+    swift:
+      extensions: [".swift"]
+    scala:
+      extensions: [".scala", ".sc"]
+    objective-c:
+      extensions: [".m", ".mm"]
+    perl:
+      extensions: [".pl", ".pm"]
+    lua:
+      extensions: [".lua"]
+    r:
+      extensions: [".r"]
+    elixir:
+      extensions: [".ex", ".exs"]
+    erlang:
+      extensions: [".erl", ".hrl"]
+    haskell:
+      extensions: [".hs"]
+    clojure:
+      extensions: [".clj", ".cljs", ".cljc"]
+    groovy:
+      extensions: [".groovy", ".gradle"]
+    shell:
+      extensions: [".sh", ".bash", ".zsh"]
+    powershell:
+      extensions: [".ps1"]
+    visual-basic:
+      extensions: [".vb"]
+    f-sharp:
+      extensions: [".fs", ".fsx"]
+    ocaml:
+      extensions: [".ml", ".mli"]
+    julia:
+      extensions: [".jl"]
+
+  # Directories/patterns excluded from analysis.
+  #
+  # Patterns follow the gitignore standard (https://git-scm.com/docs/gitignore),
+  # so configure them the same way you would a .gitignore file. Matching is done
+  # against each file/directory path relative to the repository root. The rules
+  # you will use most often:
+  #   - No slash         -> matches a BASENAME at any depth
+  #                         (e.g. "node_modules", "*.min.js", "test*").
+  #   - A slash in the pattern -> anchored to the repo root and matched against
+  #                         the relative path (e.g. "static/js/*.min.js",
+  #                         "/src/generated"). A leading "/" is an explicit
+  #                         root anchor.
+  #   - "**"             -> matches across directories ("**/generated/**");
+  #                         "*" and "?" stay within a single path segment.
+  #   - Trailing "/"     -> restricts the rule to directories ("vendor/").
+  #
+  # Supported subset: the commonly used gitignore syntax above. NOT yet
+  # implemented: "!" negation (re-including a previously excluded path) and
+  # "[abc]" character classes — those patterns are treated literally, so avoid
+  # them here.
+  #
+  # To skip additional paths in a deployment without editing this file, set
+  # CODEKB_EXCLUDE_PATTERNS_EXTRA to a comma- or newline-separated list
+  # (e.g. "*.min.js,static/js/*.min.js,vendor/"). Those entries are APPENDED to
+  # the list below — the built-ins here are always kept — so a deployment only
+  # names the extras it wants. (There is no env var that replaces this list.)
+  #
+  # A space records the patterns it was created with and keeps them for its
+  # whole life, so changes here only affect spaces created afterwards.
+  exclude_patterns:
+    - ".git/"
+    - ".svn/"
+    - ".hg/"
+    - "node_modules/"
+    - "__pycache__/"
+    - "__MACOSX/"
+    - ".pytest_cache/"
+    - ".mypy_cache/"
+    - "build/"
+    - "dist/"
+    - ".venv/"
+    - "venv/"
+    - ".env"
+    - "*.egg-info"
+    - "._*"
+    # Test suites
+    - "test/"
+    - "tests/"
+    - "__tests__/"
+    # AI coding-agent workspaces
+    - ".claude/"
+    - ".kiro/"
+    - ".codex/"
+    - ".opencode/"
+    - ".cursor/"
+
+  max_file_size_mb: 10
+  max_files_per_directory: 10000
+
+  # Maximum syntax-tree depth allowed
+  max_ast_depth: 500
+
+  # Levels in a call graph with source. Used by each summarization prompt (creation
+  # and refresh), refresh's stale-caller walk, and the MCP get_call_graph_with_source default.
+  call_graph_depth: 10
+
+# Storage — S3 and S3 Vectors backends
+storage:
+  backend: s3_vectors
+
+  s3:
+    # MUST be set via CODEKB_S3_BUCKET to a globally-unique bucket you 
+    bucket_name: ""
+    region: "us-east-1"
+    max_upload_size_mb: 500
+    read_timeout: 300
+
+  s3_vectors:
+    # MUST be set via CODEKB_S3_VECTORS_BUCKET to a globally-unique bucket 
+    bucket_name: ""
+    index_name: "codekb-index"
+    region: "us-east-1"
+    dimension: 1024
+    embedding_model: "amazon.titan-embed-text-v2:0"
+    default_top_k: 20
+
+# Per-user git credentials. Tokens are stored under users/{sub}/
+# gitcreds.json in the KB bucket, sealed with an envelope wrapped by the
+# KMS key from CODEKB_GIT_CREDENTIALS_KMS_KEY_ARN, which must be set before a
+# credential can be saved or read.
+gitcreds:
+  # Enabled providers (env CODEKB_GIT_CREDENTIALS_PROVIDERS): any combination of
+  # github, gitlab, bitbucket, or "NONE" for public repositories only.
+  providers: "github"
+  # Seconds allowed for one provider identity call.
+  http_timeout: 10.0
+  # Optional self-hosted host per provider, as a full http(s) URL with an
+  # optional port (e.g. https://github.example.com:8443). When set, repos on that
+  # host have their visibility read from the instance API. A host that is neither
+  # a cloud host nor a configured custom host is unsupported and fails create.
+  # Cloud hosts always work.
+  github_custom_host: ""     # env CODEKB_GITHUB_CUSTOM_HOST
+  gitlab_custom_host: ""     # env CODEKB_GITLAB_CUSTOM_HOST
+  bitbucket_custom_host: ""  # env CODEKB_BITBUCKET_CUSTOM_HOST
+
+# Authentication: require every /api and /mcp request to carry a verified
+# identity. On by default (fail-closed). The canonical override is
+# CODEKB_REQUIRE_AUTHENTICATION; CODEKB_REQUIRE_AUTH is an accepted
+# backward-compatible alias. Set either to false for local dev ONLY.
+authn:
+  require_authentication: true
+
+# Space authorization: access follows the caller's git permission. On by default.
+authz:
+  # Main switch (env CODEKB_REQUIRE_AUTHORIZATION). Needs authentication on
+  # (CODEKB_REQUIRE_AUTHENTICATION=true, or its alias CODEKB_REQUIRE_AUTH=true).
+  require_authorization: true
+  # Max age of a cached permission entry, in hours (how long a revoked grant lingers).
+  repo_cache_ttl_hours: 4
+  # Permission cache capacity (entries).
+  repo_cache_maxsize: 2000
+
+# LLM settings for every text-generation call. How each workload resolves its
+# settings is described in core/llm_settings.py.
+llm:
+  # At API startup, send one short request per distinct model and settings
+  # combination. Startup fails only if Bedrock rejects the settings (e.g. a
+  # thinking type the model doesn't accept); any other failure, such as no
+  # credentials or throttling, is logged as a warning and startup continues.
+  # Env: CODEKB_LLM_STARTUP_CHECK
+  startup_check: true
+  # Shared defaults. Every workload inherits these unless it sets its own value.
+  defaults:
+    # Env: CODEKB_BEDROCK_MODEL_ID
+    model_id: "us.anthropic.claude-opus-4-6-v1"
+    # Hard cap on output tokens per call, thinking included.
+    # Env: CODEKB_BEDROCK_MAX_TOKENS
+    max_tokens: 65536
+    # thinking.type sent to the model. model_default sends no thinking field,
+    # so the model's own default applies: no thinking on Claude Opus 4.8 and
+    # earlier, adaptive thinking on Claude 5.x. Any other value (adaptive,
+    # between_tools, disabled, enabled) is sent unchanged; which ones a model
+    # accepts is listed on its Bedrock model card. Env: CODEKB_LLM_THINKING
+    thinking: model_default
+    # output_config.effort (low, medium, high, xhigh, max). null sends none.
+    # Env: CODEKB_LLM_EFFORT
+    effort: null
+  # Per-workload overrides; a missing or empty value inherits from defaults.
+  # Env: CODEKB_<WORKLOAD>_<FIELD>, e.g. CODEKB_SUMMARIZATION_THINKING or
+  # CODEKB_BUSINESS_CONTEXT_MAX_TOKENS. A workload that sets its own model_id
+  # does not inherit thinking, effort or budget_tokens.
+  workloads:
+    # Function and component descriptions (TopDownSummarizer).
+    summarization: {}
+    # Repository business vocabulary (one call per analysis).
+    business_context:
+      max_tokens: 2048
+    # Space and hyperspace overview documents.
+    overview: {}
+    # Web chat (Agent Hopper).
+    chat:
+      # A chat answer is markdown read by a person, far shorter than the
+      # shared default; each parallel call also reserves its max_tokens
+      # against the Bedrock quota. Env: CODEKB_CHAT_MAX_TOKENS
+      max_tokens: 16000
+      # Deprecated: true sends thinking.type "enabled" with this budget, which
+      # Claude 5.x models reject. Use CODEKB_CHAT_THINKING instead; it takes
+      # precedence. Env: CODEKB_BEDROCK_REASONING,
+      # CODEKB_BEDROCK_REASONING_BUDGET_TOKENS
+      reasoning: false
+      reasoning_budget_tokens: 4096
+  providers:
+    bedrock:
+      # Env: CODEKB_BEDROCK_REGION
+      region: "us-east-1"
+      # Env: CODEKB_BEDROCK_READ_TIMEOUT
+      read_timeout: 1800
+      # Mask committed secrets/PII before any text-generation call — nothing
+      # sensitive then reaches Bedrock, the stored descriptions, or the shared
+      # index. Built-in PII + custom regex, all ANONYMIZE. id/version come from
+      # the deploy (CDK/CLI) via CODEKB_BEDROCK_GUARDRAIL_*. enabled=true with no
+      # id fails startup (validate_guardrail_config): a fresh checkout must either
+      # provision the guardrail or set enabled=false to run without redaction.
+      guardrail:
+        enabled: true
+        id: ""
+        version: "DRAFT"
+
+# Summarization run settings
+summarization:
+  batch_depth_threshold: 1
+  batch_size: 20
+  # Max LLM attempts per low-depth batch: the first call plus re-requests for
+  # any functions the model did not return (reconciled by comparing the
+  # returned IDs against the batch). Re-requests cover only the missing
+  # functions and shrink as indexed callees become CACHED DESCRIPTION.
+  # 1 disables re-requesting.
+  batch_reconcile_max_rounds: 3
+  max_input_chars: 200000
+  # Abort a summarization run once cumulative tokens (input+output across the
+  # run) reach this ceiling — a cost guardrail. 0 disables.
+  token_budget: 0
+  # Open the circuit and abort the run after this many consecutive Bedrock call
+  # failures, instead of grinding through every remaining component. 0 disables.
+  circuit_breaker_threshold: 5
+  # Parallel LLM calls within a depth level. 1 = serial. Higher values speed
+  # up summarization but increase Bedrock load. Override: CODEKB_SUMMARIZATION_CONCURRENCY.
+  concurrency: 1
+  # Stale in-progress detection thresholds (seconds), used by get_analysis_status.
+  # warn: soft "taking longer than usual" message; the status is kept. Also the
+  # interval at which the process logs "Pipeline still running" for any
+  # background job (see service.pipeline_pool_size); 0 turns both off.
+  # Override: CODEKB_SUMMARIZATION_WARN_AFTER_STALE_S.
+  warn_after_stale_s: 1800
+  # fail: hard flip to FAILED once a step's updated_at heartbeat is this old
+  # (12h). Long enough that a legitimately slow run on a very large repo is
+  # never failed prematurely; short enough that a genuinely dead/wedged run
+  # (e.g. its worker task was recycled) stops being reported in-progress
+  # forever and can be retried. 0 disables the hard flip.
+  # Override: CODEKB_SUMMARIZATION_FAIL_AFTER_STALE_S.
+  fail_after_stale_s: 43200
+  # Input limits for the business vocabulary call. Its max_tokens is under
+  # llm.workloads.business_context.
+  business_context:
+    max_input_chars: 60000
+    max_components: 1200
+    max_classes: 300
+    max_named_values: 200
+    max_doc_chars: 12000
+
+# Pricing / cost reporting
+pricing:
+  bedrock_pricing_url: "https://aws.amazon.com/bedrock/pricing/"
+  recent_history_limit: 20
+
+# Security response headers
+#
+# Emitted by the FastAPI app itself (codekb/api/app.py), so they apply no matter
+# how the service is fronted — localhost, a customer reverse proxy, an ALB, or
+# CloudFront. Because the container also serves the SPA HTML, the Content-Security-
+# Policy reaches the document it needs to protect without depending on any
+# particular infra. Every value here is overridable via CODEKB_SECURITY_* env vars.
+security:
+  headers:
+    # Master switch. When false, no security headers are added.
+    enabled: true
+
+    # Content-Security-Policy for the SPA document (applied to text/html responses).
+    # 'unsafe-inline' style is required by Cloudscape (CSS-in-JS) and Mermaid's
+    # injected styles. script-src stays 'self' — validate against the running UI
+    # before a release; if Mermaid diagrams or the Cloudscape shell break, use
+    # csp_report_only first to collect violations, then adjust (Mermaid may need
+    # 'unsafe-eval' depending on the pinned version).
+    #
+    # connect-src stays 'self' here on purpose: the deployment's S3 bucket origin
+    # (needed for the cross-origin presigned zip upload) is appended at startup
+    # by the middleware in codekb/api/app.py. Don't hardcode a bucket domain here
+    # — it differs per deployment — and don't reach for a wildcard: CSP only
+    # allows one in the leftmost host label, so https://*.s3.*.amazonaws.com is
+    # invalid and silently ignored, looking like a fix while uploads stay broken.
+    content_security_policy: >-
+      default-src 'self';
+      script-src 'self';
+      style-src 'self' 'unsafe-inline';
+      img-src 'self' data:;
+      font-src 'self' data:;
+      connect-src 'self';
+      worker-src 'self' blob:;
+      frame-ancestors 'none';
+      object-src 'none';
+      base-uri 'self'
+
+    # When true, send Content-Security-Policy-Report-Only instead of enforcing.
+    # Lets a deployment observe violations without breaking the UI.
+    csp_report_only: false
+
+    # Strict-Transport-Security value. Empty = not sent. HSTS only takes effect
+    # over HTTPS and, with includeSubDomains, would force HTTPS on sibling hosts
+    # of the serving domain — so it is opt-in for this portable artifact. For an
+    # HTTPS-only deployment on a dedicated host, set e.g.:
+    #   "max-age=31536000; includeSubDomains"
+    hsts: ""
+
+# Feature flags
+#
+# Per-deployment toggles for optional product features. Each is overridable at
+# runtime via a CODEKB_* env var (see _ENV_OVERRIDES in config.py) so a
+# deployment can disable a feature without a rebuild.
+features:
+  # Zip upload: lets users create a space by uploading a zipped source directory
+  # straight from their machine. Enterprises that only want vetted repositories
+  # analyzed can turn this off with CODEKB_ZIP_UPLOAD_ENABLED=false; the upload
+  # tile is then hidden in the UI and the upload endpoints reject requests.
+  # Git-URL and (internal) package sources are unaffected.
+  zip_upload_enabled: true
+
+  # Allow credentials embedded in a Git URL (https://user:token@host/repo.git).
+  # Off by default; the token is then persisted in the Space status. Enable
+  # (CODEKB_ALLOW_CREDENTIALS_IN_GIT_URL=true) for deployments without a
+  # credentials KMS key that still need to clone private repos.
+  allow_credentials_in_git_url: false
+
+  # Ability to generate Space Overview + Hyperspace Overview.   
+  overview_generation_enabled: true
+
+  # Allow a Git host to resolve to a private or loopback address (default false).
+  # CodeKB resolves the host after the allowlist passes and refuses to clone if it
+  # lands on a private or loopback IP — an SSRF guard the name-only allowlist can't
+  # provide. Set CODEKB_ALLOW_PRIVATE_GIT_ADDRESSES=true ONLY for a self-hosted Git
+  # server on a private network reached by hostname (a private IP literal on
+  # CODEKB_ALLOWED_GIT_HOSTS always works). Link-local/metadata, multicast and
+  # reserved addresses are rejected regardless.
+  allow_private_git_addresses: false
+
+# Service runtime
+#
+# Tuning for the long-lived API service process itself, as opposed to the
+# analysis pipeline. Overridable at runtime via CODEKB_* env vars so a
+# deployment can retune without a rebuild.
+service:
+  # How many space contexts (knowledge base + component catalog + call graph) the
+  # process keeps in memory at once. Reading a space loads its whole graph; the
+  # cache makes the next read cheap, and this bounds it so a process that has
+  # served many spaces cannot grow without limit. Least-recently-used entries are
+  # evicted first. Override: CODEKB_MAX_CACHED_SPACES.
+  #
+  # Sizing. Cost is roughly 580 bytes per component, measured: a 3,400-component
+  # repository is ~2 MB cached, so 20 entries is ~40 MB. A 100,000-component
+  # monorepo is closer to ~58 MB each, so lower this if your spaces are very
+  # large. 
+  max_cached_spaces: 50
+
+  # The most background jobs (space analysis, zip-upload analysis, space
+  # refresh, space and hyperspace overview) one API process runs at once; each
+  # running job has its own thread. When this many are running, a new job is
+  # refused with HTTP 429 and Retry-After, nothing is written for it, and the
+  # log records "Pipeline refused". The limit is per process: if you run several
+  # API processes (containers, hosts, replicas), the most jobs running across
+  # the deployment is this times the number of processes. 0 turns the limit off
+  # (see "Turning it off" below); a negative value stops startup. Override:
+  # CODEKB_PIPELINE_POOL_SIZE.
+  #
+  # Sizing. A job's cost grows with the repository: its parsed knowledge base is
+  # held in memory, its clone or extracted zip sits on local disk under
+  # /tmp/codekb, and it makes up to summarization.concurrency Bedrock calls at
+  # once. Memory is usually what runs out first. To size it:
+  #   1. Run one analysis of your largest repository and note the process's peak
+  #      memory and the size of its working tree under /tmp/codekb.
+  #   2. Set this to (memory available to the process, minus headroom for the
+  #      API and its space cache) divided by that peak, rounded down.
+  #   3. Check disk: this times the largest working tree, plus
+  #      source_cache.max_size_gb, must fit on local disk.
+  #   4. Check Bedrock: this x API processes x summarization.concurrency is the
+  #      most Bedrock calls in flight. Past your account's quota, calls are
+  #      throttled and jobs slow down rather than failing.
+  # Lowering it is always safe. Raise it if you see "Pipeline refused" often
+  # while memory has room to spare.
+  #
+  # Monitoring. Each job logs "Pipeline started" and "Pipeline finished" with
+  # its kind, space or hyperspace ID, duration and slots in use. A job still
+  # running after summarization.warn_after_stale_s logs "Pipeline still
+  # running" at that interval. A job that never finishes keeps its slot until
+  # the process restarts, so a start with no finish is the sign to look for.
+  #
+  # Turning it off. Set this to 0 only as an emergency switch, if the limit
+  # itself misbehaves. Jobs then start immediately on their own thread, exactly
+  # as before the limit existed: none are refused, counted or logged, and the
+  # long-run warning is off. That also brings back unlimited concurrent jobs,
+  # which the limit exists to prevent, so startup logs a warning; set it back
+  # to a positive value once the problem is fixed.
+  #
+  # Why 32. It is a starting point assuming a host with 32 CPUs, not a measured
+  # value. It is set high enough that normal use, including automation that
+  # starts many jobs, rarely sees a 429, while a flood of requests still stops
+  # at a fixed ceiling instead of growing without limit. It does not promise
+  # that 32 jobs fit in memory: one analysis of a large repository can use
+  # several GB on its own, so 32 at once suits small to medium repositories on
+  # a large host. On a smaller host, or with large repositories, lower it using
+  # the sizing steps above.
+  pipeline_pool_size: 32
+
+# Local source cache
+#
+# Reading a space's files needs the repository on local disk, so it is extracted
+# from S3 into /tmp/codekb/<space_id> and kept for the next read. Cache entries are
+# evicted least-recently-used once the cache reaches max_size_gb; pipeline working
+# trees (/tmp/codekb/<space_id>-analysis and -refresh) are never evicted.
+source_cache:
+
+  # Ceiling on the total size of the extracted source cache, in GiB. Fractions are
+  # allowed, so 0.5 means 512 MiB. Set to 0 to leave the cache unbounded (eviction
+  # is disabled).
+  # Override: CODEKB_SOURCE_CACHE_MAX_SIZE_GB.
+  # Not counted: pipeline working trees, which eviction cannot reclaim while their
+  # run is in progress. Peak disk use is therefore this cap plus one incoming repo
+  # plus the working set of any analyses running concurrently.
+  max_size_gb: 10
+
+  # How long (hours) a cached source tree and KB context are trusted before being
+  # re-checked for a refresh that ran on another container. Past this, a cheap S3
+  # HEAD compares the recorded ETag with the current one; a mismatch drops the local
+  # tree and KB context so the next read re-hydrates. 0 disables the check (caches
+  # then refresh only on eviction or restart).
+  # Override: CODEKB_SOURCE_CACHE_REFRESH_CHECK_TTL_HOURS.
+  refresh_check_ttl_hours: 4

@@ -1,0 +1,148 @@
+[build-system]
+requires = ["setuptools>=68.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aws-codekb-backend"
+version = "0.0.1"
+description = "Code understanding system"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+keywords = ["code-analysis", "tree-sitter", "knowledge-base", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Code Generators",
+]
+
+dependencies = [
+    "tree-sitter>=0.23.6",
+    "tree-sitter-python>=0.23.6",
+    "tree-sitter-typescript>=0.23.2",
+    "tree-sitter-javascript>=0.23.0",
+    "tree-sitter-java>=0.23.4",
+    "tree-sitter-kotlin>=0.3.8",
+    "tree-sitter-go>=0.23.1",
+    "tree-sitter-c-sharp>=0.23.0",
+    "tree-sitter-cpp>=0.23.0",
+    "tree-sitter-c>=0.23.0",
+    "tree-sitter-rust>=0.24.0",
+    "tree-sitter-php>=0.23.0,<0.24",
+    "tree-sitter-ruby>=0.23.1",
+    "tree-sitter-hcl>=1.2.0",
+    # Only release on PyPI, and it lags the language; see docs/languages.md for what
+    # it cannot parse.
+    "tree-sitter-dart==0.1.0",
+    "pyyaml>=6.0",
+    "boto3[crt]>=1.28.0",
+    "python-dotenv>=1.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.0.0",
+    "strands-agents>=0.1.0",
+    "mcp>=0.9.0",
+    "PyJWT[crypto]>=2.8.0",
+    "httpx>=0.27.0",
+    "aws-opentelemetry-distro==0.19.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.8.0",
+    "pytest>=7.4.0",
+    "mcp<2.0.0",
+    "pydantic>=2.0.0",
+    "moto[s3]>=5.0.0",
+    "setuptools>=68.0.0",
+]
+
+
+
+[project.urls]
+Homepage = "https://github.com/awslabs/codekb"
+Repository = "https://github.com/awslabs/codekb"
+Issues = "https://github.com/awslabs/codekb/issues"
+
+[project.scripts]
+codekb-api = "src.api.app:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+# Not src-layout: src/ is itself the package. Adding where = ["src"] finds nothing.
+include = ["src*"]
+
+[tool.setuptools.package-data]
+# Ship the default config bundled inside the package (was hatch force-include).
+"src.core" = ["default.yaml"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
+precision = 2
+show_missing = true
+skip_covered = false
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=7.0.0",
+    "ruff>=0.14.14",
+    "moto[s3]>=5.0.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F"]
+ignore = ["E501"]  # Line too long - handled separately with line-length setting
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

@@ -1,0 +1,42 @@
+# Build context filter for the repo-root Dockerfile. The image only needs
+# backend/ and frontend/ (the Dockerfile builds the SPA from frontend/ and runs
+# the backend from backend/). Everything else is kept out of the context sent to
+# the daemon — for speed, a stable asset hash, and so no local secret ships.
+
+# VCS / editor / OS
+.git
+**/.DS_Store
+.idea
+.vscode
+
+# Node (the frontend's deps are reinstalled inside the image via npm ci)
+**/node_modules
+frontend/build
+
+# Python caches / virtualenvs / build output
+**/.venv
+**/__pycache__
+**/*.pyc
+**/*.egg-info
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.coverage
+**/.hypothesis
+
+# Infra, release artifacts, and things the image never needs
+infra
+release
+tests
+docs
+scripts
+cdk.out
+
+# Secrets / local env / keys
+**/.env
+**/.env.*
+*.pem
+*.key
+
+# Misc
+**/tsconfig.tsbuildinfo

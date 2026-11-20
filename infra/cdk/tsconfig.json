@@ -1,0 +1,12 @@
+{
+  "extends": "@tsconfig/node-lts",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "inlineSourceMap": true,
+    "inlineSources": true,
+    "experimentalDecorators": true,
+    "types": ["node"],
+    "rootDir": "."
+  },
+  "exclude": ["cdk.out", "build", "node_modules", "dist"]
+}
