@@ -1,0 +1,291 @@
+"""Regression tests for component-id collision fixes.
+
+Two distinct declarations that build the same id make ComponentCatalog.add_component
+last-write-wins, silently dropping a component's source/calls/description/vector.
+These tests pin the fixes that keep such declarations distinct:
+
+  1. Overloaded methods/functions (param-type hash suffix, central pass).
+  2. Kotlin extension functions (receiver type in the id).
+  3. Kotlin locals inside function bodies/lambdas (not emitted).
+  4. C# method name read from the `name` field, not the return type.
+  5. Terraform addresses prefixed per-file under V2 (unchanged under V1).
+  6. ComponentCatalog counts overwrites in its statistics.
+"""
+
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from src.analysis.code_analyzer import CodeAnalyzer
+from src.catalog.component_catalog import ComponentCatalog
+from src.core.models import IdScheme
+
+
+def _analyze(files: dict[str, str], scheme: IdScheme = IdScheme.V2_PATH):
+    """Write files into a temp dir, analyze it, return (catalog, components)."""
+    d = Path(tempfile.mkdtemp())
+    for rel, content in files.items():
+        p = d / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+    catalog = ComponentCatalog()
+    CodeAnalyzer(catalog).analyze_directory(d, space_id="t", id_scheme=scheme)
+    return catalog, list(catalog._components.values())
+
+
+def _methods(components, language):
+    return [
+        c
+        for c in components
+        if c.language == language and c.type.value in ("method", "function", "constructor")
+    ]
+
+
+def test_csharp_overloads_do_not_collide():
+    catalog, comps = _analyze(
+        {
+            "svc.cs": """
+class OrderService {
+  public void Save(User u) {}
+  public void Save(User u, bool force) {}
+}
+"""
+        }
+    )
+    saves = [c for c in _methods(comps, "csharp") if c.get_simple_name() == "Save"]
+    # Both overloads survive as distinct components...
+    assert len(saves) == 2
+    assert len({c.id for c in saves}) == 2
+    # ...while the display / resolution name stays the bare method name.
+    assert all(c.get_simple_name() == "Save" for c in saves)
+    assert catalog.get_statistics()["overwritten_components"] == 0
+
+
+def test_csharp_name_from_name_field_not_return_type():
+    """`public Task Foo()` must be named Foo, not its return type Task."""
+    _, comps = _analyze(
+        {
+            "svc.cs": """
+class S {
+  public Task Foo() { return null; }
+  public Task Bar() { return null; }
+}
+"""
+        }
+    )
+    names = {c.get_simple_name() for c in _methods(comps, "csharp")}
+    assert "Foo" in names and "Bar" in names
+    assert "Task" not in names
+
+
+def test_kotlin_extension_functions_keep_receiver():
+    _, comps = _analyze(
+        {
+            "ext.kt": """
+fun String.toSlug(): String { return this }
+fun Int.toSlug(): String { return "" }
+"""
+        }
+    )
+    slugs = [c for c in _methods(comps, "kotlin") if c.get_simple_name() == "toSlug"]
+    assert len(slugs) == 2
+    assert len({c.id for c in slugs}) == 2  # distinct ids via receiver type
+    # The receiver appears in the id so the two are addressable apart.
+    assert any("String" in c.id for c in slugs)
+    assert any("Int" in c.id for c in slugs)
+
+
+def test_kotlin_locals_are_not_emitted():
+    _, comps = _analyze(
+        {
+            "a.kt": """
+fun buildCart() { fun helper(): Int { return 1 }; val x = 5 }
+fun buildOrder() { fun helper(): Int { return 2 } }
+"""
+        }
+    )
+    names = [c.get_simple_name() for c in _methods(comps, "kotlin")]
+    assert "helper" not in names
+    assert "buildCart" in names and "buildOrder" in names
+
+
+def test_terraform_same_address_distinct_across_stacks_v2():
+    _, comps = _analyze(
+        {
+            "web/iam.tf": 'resource "aws_iam_role" "ecs_task_role" { name = "a" }\n',
+            "worker/iam.tf": 'resource "aws_iam_role" "ecs_task_role" { name = "b" }\n',
+        },
+        scheme=IdScheme.V2_PATH,
+    )
+    roles = [c for c in comps if c.get_simple_name() == "aws_iam_role.ecs_task_role"]
+    assert len(roles) == 2
+    assert len({c.id for c in roles}) == 2  # prefixed per file → distinct
+    # Display name stays the bare address (also the reference-resolution key).
+    assert all(c.name == "aws_iam_role.ecs_task_role" for c in roles)
+
+
+def test_terraform_v1_ids_unchanged():
+    """Legacy V1 spaces keep address-only ids (and no separate display name)."""
+    _, comps = _analyze(
+        {"main.tf": 'resource "aws_s3_bucket" "logs" { bucket = "x" }\n'},
+        scheme=IdScheme.V1_STEM,
+    )
+    ids = {c.id for c in comps if c.language == "terraform"}
+    assert "t::aws_s3_bucket.logs" in ids  # verbatim address, no prefix
+
+
+def test_cpp_overloads_do_not_collide_v2():
+    _, comps = _analyze(
+        {
+            "a.cpp": (
+                "class A { public:"
+                " int f(int x){return x;}"
+                " int f(int x,int y){return x;}"
+                " void f(const char* s){} };"
+            )
+        },
+        scheme=IdScheme.V2_PATH,
+    )
+    fs = [c for c in _methods(comps, "cpp") if c.get_simple_name() == "f"]
+    assert len(fs) == 3
+    assert len({c.id for c in fs}) == 3  # distinct via parameter-type signature
+
+
+def test_cpp_prototype_and_definition_still_merge_v2():
+    """A declaration and its definition share one id (same param types) and merge."""
+    _, comps = _analyze(
+        {"a.cpp": "class A { public: int f(int); };\nint A::f(int x){ return x; }\n"},
+        scheme=IdScheme.V2_PATH,
+    )
+    fs = [c for c in _methods(comps, "cpp") if c.get_simple_name() == "f"]
+    assert len(fs) == 1  # not duplicated
+
+
+def test_cpp_v1_ids_have_no_discriminator():
+    """Legacy V1 spaces keep bare ids (no parameter-signature suffix)."""
+    _, comps = _analyze(
+        {"a.cpp": "int add(int x){ return x; }\n"},
+        scheme=IdScheme.V1_STEM,
+    )
+    add = next(c for c in _methods(comps, "cpp") if c.get_simple_name() == "add")
+    assert add.id == "t::a.add"
+
+
+def test_python_overloads_and_accessors_get_semantic_discriminator():
+    """Python @overload stubs and property getter/setter share a name; they must
+    survive as distinct components keyed on a real (parameter-bearing) signature,
+    not an order-dependent positional suffix."""
+    _, comps = _analyze(
+        {
+            "m.py": (
+                "from typing import overload\n"
+                "@overload\n"
+                "def f(x: int) -> int: ...\n"
+                "@overload\n"
+                "def f(x: str) -> str: ...\n"
+                "def f(x): return x\n"
+                "class C:\n"
+                "    @property\n"
+                "    def val(self): return self._v\n"
+                "    @val.setter\n"
+                "    def val(self, v): self._v = v\n"
+            )
+        }
+    )
+    fs = [c for c in _methods(comps, "python") if c.get_simple_name() == "f"]
+    vals = [c for c in _methods(comps, "python") if c.get_simple_name() == "val"]
+    assert len(fs) == 3 and len({c.id for c in fs}) == 3
+    assert len(vals) == 2 and len({c.id for c in vals}) == 2
+    # Signatures are real (carry parameters), not the old bare "def".
+    assert all(c.attributes.signature.startswith("def ") for c in fs)
+    assert {c.attributes.signature for c in vals} == {"def val(self)", "def val(self, v)"}
+
+
+def test_v1_legacy_behavior_is_unchanged():
+    """All id-changing collision fixes are gated to V2; V1 spaces are untouched
+    so delta-refresh keeps regenerating ids that match the persisted ones."""
+    # C# overloads collapse under V1 (legacy last-write-wins), and the name is
+    # still read as the return type.
+    cat, comps = _analyze(
+        {"s.cs": "class S { public Task Foo(){return null;} public void Foo(int x){} }"},
+        scheme=IdScheme.V1_STEM,
+    )
+    cs = _methods(comps, "csharp")
+    assert all("_" not in c.id.rsplit(".", 1)[-1] for c in cs)  # no overload hash suffix
+    assert any(c.get_simple_name() == "Task" for c in cs)  # legacy return-type name kept
+
+    # Kotlin: extension receiver NOT in the id, and locals ARE still emitted.
+    _, kcomps = _analyze(
+        {"e.kt": "fun String.toSlug():String{ fun helper():Int{return 1}; return this }"},
+        scheme=IdScheme.V1_STEM,
+    )
+    knames = [c.get_simple_name() for c in _methods(kcomps, "kotlin")]
+    assert "helper" in knames  # local kept under V1
+    slug = next(c for c in _methods(kcomps, "kotlin") if c.get_simple_name() == "toSlug")
+    assert "String" not in slug.id  # no receiver in the id under V1
+
+
+def test_cpp_default_value_decl_and_def_still_merge():
+    """A C++ default argument is on the declaration, not the definition; the
+    type signature must ignore it so the two still share an id and merge."""
+    _, comps = _analyze(
+        {"a.cpp": "class A { public: void f(int x = 5); };\nvoid A::f(int x) {}\n"},
+        scheme=IdScheme.V2_PATH,
+    )
+    fs = [c for c in _methods(comps, "cpp") if c.get_simple_name() == "f"]
+    assert len(fs) == 1  # merged, not duplicated
+
+
+def test_cpp_disambiguator_widens_on_short_hash_collision():
+    """Two DIFFERENT signatures that collide on the short hash must still get
+    distinct ids (widened), while the SAME signature keeps one id (merge)."""
+    import hashlib
+    from src.parsers.cpp_parser import CppParser
+
+    p = CppParser()
+    p._cpp_disc_sigs = {}
+    # Pre-seed the 4-char candidate for signature "int" with a DIFFERENT
+    # signature, simulating a truncation collision.
+    four = hashlib.sha1(b"int").hexdigest()[:4]
+    p._cpp_disc_sigs[f"X.f_{four}"] = "OTHER_SIGNATURE"
+
+    got = p._disambiguated_cpp_id("X.f", "int")
+    assert got != f"X.f_{four}"          # did not reuse the taken short id
+    assert got.startswith("X.f_")
+    # Same signature again resolves to the same (widened) id -> decl/def merge.
+    assert p._disambiguated_cpp_id("X.f", "int") == got
+
+
+def test_overwrite_counter_resets_on_clear():
+    """A catalog reused across runs reports only the current run's overwrites."""
+    from src.core.models import Component, ComponentType
+
+    cat = ComponentCatalog()
+    for _ in range(2):
+        cat.add_component(
+            Component(id="t::d.X", type=ComponentType.CLASS, file_path=Path("a.py"),
+                      line_number=1, end_line_number=2, language="python")
+        )
+    assert cat.get_statistics()["overwritten_components"] == 1
+    cat.clear()
+    assert cat.get_statistics()["overwritten_components"] == 0
+
+
+def test_overwrite_counter_increments_on_collision():
+    """A forced duplicate id is counted (defense for patterns not yet covered)."""
+    from src.core.models import Component, ComponentType
+
+    catalog = ComponentCatalog()
+    for i in range(2):
+        catalog.add_component(
+            Component(
+                id="t::dup.X",
+                type=ComponentType.CLASS,
+                file_path=Path("a.py"),
+                line_number=1,
+                end_line_number=2,
+                language="python",
+            )
+        )
+    assert catalog.get_statistics()["overwritten_components"] == 1

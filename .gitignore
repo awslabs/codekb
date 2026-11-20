@@ -1,0 +1,87 @@
+# ─────────────────────────────────────────────────────────────
+# Build output
+# ─────────────────────────────────────────────────────────────
+/build
+build/
+/release-info
+bin/
+**/lib/
+
+# scripts/bundle.sh output: customer zips and its scratch build workspaces
+/release/
+
+# ─────────────────────────────────────────────────────────────
+# Secrets & local environment
+# ─────────────────────────────────────────────────────────────
+.env.*
+!.env.example
+*.env
+*.pem
+*.key
+cdk.env.*
+
+# Local Kiro IDE MCP config (points at a local server; not for the repo)
+.kiro/settings/mcp.json
+
+# ─────────────────────────────────────────────────────────────
+# Python
+# ─────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.eggs/
+dist/
+sdist/
+wheels/
+.installed.cfg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test / coverage / type-check caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.cache/
+
+# ─────────────────────────────────────────────────────────────
+# Node / frontend (Vite + React)
+# ─────────────────────────────────────────────────────────────
+node_modules/
+.vite/
+*.tsbuildinfo
+.eslintcache
+vite.config.ts.timestamp-*.mjs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─────────────────────────────────────────────────────────────
+# AWS CDK
+# ─────────────────────────────────────────────────────────────
+cdk.context.json
+cdk.out/
+*.cdk.staging/
+
+# ─────────────────────────────────────────────────────────────
+# Editors & OS
+# ─────────────────────────────────────────────────────────────
+*.swp
+*.swo
+*~
+.DS_Store
+.idea/
+.vscode/
+*.log
+.agents/
