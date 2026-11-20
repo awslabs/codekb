@@ -1,11 +1,11 @@
 # CodeKB
 
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
+
 **Code understanding for the world of autonomous software factories.**
 
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-![Python](https://img.shields.io/badge/python-3.11-blue.svg)
-![Node](https://img.shields.io/badge/node-20-green.svg)
-![Powered by Amazon Bedrock](https://img.shields.io/badge/powered%20by-Amazon%20Bedrock-FF9900.svg)
+
 
 **How are you using AI in brownfield development today?**
 

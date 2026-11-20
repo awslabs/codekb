@@ -126,7 +126,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="CodeKB API",
     description="REST API for CodeKB space management (Cloudscape Web UI backend)",
-    version="0.0.1",
+    version="1.0.0",
     lifespan=lifespan,
     docs_url=None,
     redoc_url=None,
@@ -728,7 +728,7 @@ if is_mcp_oauth_configured():
 @app.get("/api/health", tags=["health"])
 async def health() -> dict:
     """Health check (JSON)."""
-    return {"service": "codekb-api", "version": "0.0.1", "status": "ok"}
+    return {"service": "codekb-api", "version": "1.0.0", "status": "ok"}
 
 
 @app.get("/favicon.ico", include_in_schema=False)
