@@ -1,17 +1,31 @@
 # CodeKB
 
-**Turn any codebase into an explorable knowledge base: semantic search, generated architecture docs, and a repository-aware chat agent, powered by Amazon Bedrock.**
+**Code understanding for the world of autonomous software factories.**
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.11-blue.svg)
 ![Node](https://img.shields.io/badge/node-20-green.svg)
 ![Powered by Amazon Bedrock](https://img.shields.io/badge/powered%20by-Amazon%20Bedrock-FF9900.svg)
 
-CodeKB points at a Git repository (or a zip upload), parses the code, summarizes it
-with Amazon Bedrock, and gives you generated architecture overviews, intent-based
-search, and a chat agent grounded in the analyzed code. Durable CodeKB data stays
-in AWS resources that you configure; the container can run locally or in your AWS
-account and keeps temporary working files on its disk.
+**How are you using AI in brownfield development today?**
+
+You probably figure out which repositories a task touches, pull them into a workspace,
+and point your agent at them. Then you hope you did not miss one.
+
+That manual process does not scale. In a real enterprise, knowledge of how systems
+fit together is tribal. It lives across many people and hundreds or thousands of
+repositories. No single person or agent understands how it all fits together.
+
+An autonomous software factory cannot wait for a human to hand-pick repositories for
+every task. CodeKB gives you and your factory exactly that. Describe the task, and
+CodeKB automatically and reliably selects the relevant repositories from across your
+organization, then grounds your agents in how those systems actually work.
+
+This is not limited to impact analysis. The same cross-repository understanding
+supports brownfield work throughout the software lifecycle: project planning,
+feature development, debugging, refactoring, code reviews, and modernization.
+
+**Not code indexing. Code understanding.**
 
 ![CodeKB demo: a Space Overview, then a semantic search for "where are orders placed and checkout completed?"](docs/images/codekb-demo.gif)
 
@@ -36,6 +50,8 @@ account and keeps temporary working files on its disk.
 
 Each analyzed codebase is a **space**, created from a Git URL or a zip upload. Related
 spaces can be grouped into a **hyperspace**.
+
+![Creating a space from a Git repository, then watching the analysis pipeline progress to Ready](docs/images/codekb-create-space.gif)
 
 ## How it works
 
@@ -78,7 +94,7 @@ flowchart LR
 | Option | Use it when | Guide |
 | --- | --- | --- |
 | **Deploy to AWS with CDK** (recommended) | A team needs a shared instance with sign-in. Creates ECS Fargate, CloudFront, AWS WAF and Amazon Cognito in your account. | [Deploying to AWS](docs/deployment.md) |
-| **Try it on your machine** | One person evaluating CodeKB. No sign-in, reachable from localhost only. | [Local evaluation](docs/local.md) |
+| **Try it on your machine** | One person running CodeKB. No sign-in, reachable from localhost only. | [Local setup](docs/local.md) |
 
 Both need Amazon Bedrock access to a supported Claude model and to Titan Text
 Embeddings V2.
@@ -88,11 +104,11 @@ Embeddings V2.
 | Guide | What's in it |
 | --- | --- |
 | [Deploying to AWS](docs/deployment.md) | The CDK app, its cost, adopting existing resources, requirements for any deployment, teardown |
-| [Local evaluation](docs/local.md) | A single-user run on your machine |
+| [Local setup](docs/local.md) | A single-user run on your machine |
 | [MCP](docs/mcp.md) | The MCP tools and how to connect a client |
 | [Configuration](docs/configuration.md) | The settings that need a decision, models, and logs |
 | [Security](docs/security.md) | Sign-in, space authorization, Git-credential storage, decommissioning |
-| [Languages](docs/languages.md) | Supported languages and Dart caveats |
+| [Languages](docs/languages.md) | Supported languages |
 | [FAQ](docs/faq.md) | Cost, sizing, refresh, exclusions, upgrades |
 | [Troubleshooting](docs/troubleshooting.md) | Common errors and their fixes |
 | [Development](docs/development.md) | Running from source, tests, how the image is built |

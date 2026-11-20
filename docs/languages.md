@@ -1,8 +1,23 @@
 # Languages
 
-CodeKB parses these languages into components: **Python, JavaScript,
-TypeScript, Java, Kotlin, Go, Rust, C, C++, C#, PHP, Ruby, Terraform (HCL) and
-Dart**.
+CodeKB parses supported languages into components:
+
+| Language | Additional notes |
+|---|---|
+| C | |
+| C++ | |
+| C# | |
+| Dart | See [Dart notes](#dart) |
+| Go | |
+| Java | |
+| JavaScript | |
+| Kotlin | |
+| PHP | |
+| Python | |
+| Ruby | |
+| Rust | |
+| Terraform | HCL files |
+| TypeScript | |
 
 Files in other languages are skipped, and the space shows how many. Tests, build
 output and AI-agent folders are excluded by default; see
@@ -19,15 +34,13 @@ Know these limits before relying on a Dart space, especially its call edges:
   parsed correctly.
 - **Generated files are skipped:** `*.g.dart`, `*.freezed.dart`, `*.gr.dart` and
   `*.mocks.dart`.
-- **Calls through function parameters aren't followed.** In
-  `void helper(r) { r.find(); }`, the call to `find` gets no edge even when the
-  argument's type is known at the call site.
-- **A method without a return type is recorded as the class's unnamed
-  constructor** (`Repo.new`), because the grammar parses it that way.
-- **A call edge can point at the wrong component.** A static factory is assumed to
-  return its own class, and a call can resolve to a same-named component in
-  another language in the same space. Treat a Dart edge that lands in another
-  language as suspect.
+- **Generic named-constructor calls aren't followed.** A call such as
+  `Box<int>.named()` gets no call edge, even when the constructor declaration is
+  indexed.
+- **Calls through static factory results can resolve to the wrong class.** Type
+  inference assumes a class-like factory returns its own class, so a later call
+  through that value can target the factory's class when the factory actually
+  returns another type.
 
 Classes, mixins, extensions, extension types and typedefs are all stored as
 `class` components; the signature shows which one it is.

@@ -18,7 +18,7 @@
 **The UI loads but every request fails with 503**
 - Sign-in is on but not configured. Set `CODEKB_COGNITO_USER_POOL_ID` and
   `CODEKB_COGNITO_APP_CLIENT_IDS` ([Deploying to AWS → Sign-in](deployment.md#sign-in)),
-  or, for a [local evaluation](local.md) only, set
+  or, for a [local setup](local.md) only, set
   `CODEKB_REQUIRE_AUTHENTICATION=false`.
 
 **Bedrock errors (`AccessDeniedException`, `ValidationException`)**

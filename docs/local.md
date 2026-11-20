@@ -1,8 +1,8 @@
-# Local evaluation
+# Local setup
 
 This page runs CodeKB for **one person on their own machine**, with sign-in
-turned off and the port reachable from localhost only. Use it to evaluate
-CodeKB. For anything other people can reach, use [Deploying to AWS](deployment.md).
+turned off and the port reachable from localhost only. Use it to run CodeKB
+locally. For anything other people can reach, use [Deploying to AWS](deployment.md).
 
 With sign-in off, requests aren't authenticated. A caller can choose any identity
 through an unsigned token or header, so anyone who can reach the port can act as
@@ -32,7 +32,7 @@ CODEKB_REQUIRE_AUTHENTICATION=false
 ```
 
 Leave `CODEKB_BEDROCK_GUARDRAIL_ID` for step 3. The comments in `.env.example`
-describe every other setting; the defaults suit an evaluation.
+describe every other setting; the defaults suit a local setup.
 
 ## 2. Sign in to AWS
 

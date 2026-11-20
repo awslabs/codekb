@@ -8,7 +8,7 @@
 For backend work, install Python 3.11 and
 [uv](https://docs.astral.sh/uv/getting-started/installation/). Frontend work needs
 Node.js 20. Running CodeKB or its end-to-end tests also needs the AWS resources
-and credentials in [Local evaluation](local.md#prerequisites).
+and credentials in [Local setup](local.md#prerequisites).
 
 ---
 
@@ -41,7 +41,7 @@ and credentials in [Local evaluation](local.md#prerequisites).
 ## Running from source
 
 ```bash
-cp .env.example .env     # then fill it in, as in Local evaluation step 1
+cp .env.example .env     # then fill it in, as in Local setup step 1
 ./scripts/run.sh
 ```
 
@@ -67,7 +67,7 @@ to the loopback interface only. They warn up front if `OTEL_LOGS_EXPORTER` or
 refuses to continue. Pass `--help` to any script for its flags.
 
 You still need the AWS resources from
-[Local evaluation step 3](local.md#3-create-the-aws-resources)
+[Local setup step 3](local.md#3-create-the-aws-resources)
 and Bedrock model access before CodeKB can do real work.
 
 ## Running the tests
