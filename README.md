@@ -3,9 +3,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
 
-**Code understanding for the world of autonomous software factories.**
-
-
+## Code understanding for the world of autonomous software factories.
 
 **How are you using AI in brownfield development today?**
 
