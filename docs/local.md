@@ -122,7 +122,7 @@ Never delete or replace the KMS key once tokens are saved: they become unreadabl
 `CodeKBAccessPolicy` allows object read, write, list and delete on the bucket;
 vector operations on the index; `InvokeModel` on Claude models, their inference
 profiles and Titan Text Embeddings V2; `ApplyGuardrail`; writes to the log group;
-and `GenerateDataKey` and `Decrypt` on the KMS key. It also denies any model call
+and `GenerateDataKey`, `Decrypt` and `DescribeKey` on the KMS key. It also denies any model call
 that doesn't carry the guardrail. The supplied policy supports Claude; a different
 model needs a corresponding model ARN in the allow statement.
 
