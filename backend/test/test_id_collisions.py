@@ -15,7 +15,6 @@ These tests pin the fixes that keep such declarations distinct:
 import tempfile
 from pathlib import Path
 
-import pytest
 
 from src.analysis.code_analyzer import CodeAnalyzer
 from src.catalog.component_catalog import ComponentCatalog
