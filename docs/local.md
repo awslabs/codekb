@@ -12,7 +12,8 @@ that way.
 ## Prerequisites
 
 - Linux or macOS, Git, Docker (or finch), and AWS CLI v2 with S3 Vectors
-  support (`aws s3vectors help` should succeed).
+  support (`aws s3vectors create-vector-bucket --generate-cli-skeleton` should
+  print JSON; it makes no AWS call).
 - An AWS account where you can create the resources in step 3.
 - Amazon Bedrock access to a Claude model (Claude Opus 4.6 is the default) and to
   Titan Text Embeddings V2, in the region you will use.
@@ -107,6 +108,14 @@ exist, but reapplies the bucket's public-access block, encryption, policy and
 CORS; updates the guardrail and managed IAM policy; and enables KMS rotation.
 Don't point it at shared or manually managed resources unless those changes are
 intended.
+
+The IAM policy name (`CodeKBAccessPolicy`), KMS alias
+(`alias/codekb-git-creds-kek`), guardrail name (`codekb-secret-redaction`) and log
+group (`/codekb/otel`) are fixed in the script and aren't configurable. If your
+account already has any of them, a run updates the policy and guardrail in place
+and reuses the KMS key and log group. To run a second installation in the same
+account and region, edit those names in `infra/cli/setup_aws.sh` first (and
+`OTEL_EXPORTER_OTLP_HEADERS` in `.env` if you rename the log group).
 
 | Resource | Notes |
 | --- | --- |
