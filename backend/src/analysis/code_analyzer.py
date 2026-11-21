@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from ..core.interfaces import IComponentRepository
 from ..core.models import (
+    Component,
     KnowledgeBase,
     ParseFailureReport,
     ParseResult,
