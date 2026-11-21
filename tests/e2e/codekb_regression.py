@@ -1367,7 +1367,7 @@ def phase_security_headers(ctx: Context) -> None:
     with ctx.check("known client-side routes still serve the SPA shell"):
         # Guards against over-narrowing the allowlist: deep links and refreshes
         # on real UI routes (served only by the catch-all) must still work.
-        resp = client.get("/git-credentials")
+        resp = client.get("/git-creds")
         if resp.status == 404:
             raise Skipped("SPA is not bundled in this build (no codekb/static/dist)")
         expect_status(resp, 200)
