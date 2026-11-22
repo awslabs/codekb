@@ -53,6 +53,9 @@ spaces can be grouped into a **hyperspace**.
 
 ## How it works
 
+CodeKB runs as one container that serves the web UI, the REST API and the MCP server.
+Everything it stores and every model it calls are in your own AWS account.
+
 ```mermaid
 flowchart LR
     dev([Developer<br/>browser])
@@ -84,6 +87,22 @@ flowchart LR
     api -- clone --> git
 ```
 
+1. **Add a space.** Give CodeKB a Git URL or upload a zip. It clones or extracts the
+   source and archives a copy in S3. Saved Git tokens are encrypted with a KMS key.
+2. **Parse.** Tree-sitter parsers extract the functions, classes and modules in each
+   [supported language](docs/languages.md), plus the call graph between them.
+3. **Summarize and index.** LLM on Amazon Bedrock describes what each function
+   does. It works from the deepest callees up, so each caller's description builds on
+   its callees' descriptions. A Bedrock Guardrail masks secrets and PII before the
+   source reaches the model. Titan embeds the descriptions into S3 Vectors, and the
+   knowledge base is saved to S3. The space is then Ready.
+4. **Explore.** Semantic search finds components by what they do. Call-graph tools
+   then show a match's source, callers and callees. Agent Hopper and MCP clients
+   such as Kiro use the same tools. Space Overviews are generated on demand, and a
+   hyperspace extends all of this across repositories.
+5. **Keep it current.** Refreshing a Git-sourced space re-parses only the changed
+   files and re-summarizes the changed functions and their callers. If a refresh
+   fails, the last indexed version stays searchable.
 
 ---
 
@@ -126,8 +145,6 @@ Embeddings V2.
   beyond that are skipped with only a log warning. Files over 10 MB are skipped.
   A Git clone must finish within 5 minutes. A zip upload can be up to 500 MB and
   5 GB once extracted.
-- **Built for Claude.** The Qwen response path is experimental. The embedding
-  model (Titan Text Embeddings V2) is fixed.
 - **Background jobs are capped and run inside the server process.** By default,
   each process runs at most 32 analyses, refreshes and overview generations at once
   (`CODEKB_PIPELINE_POOL_SIZE`); further job requests get HTTP 429 with
