@@ -1,6 +1,40 @@
 """Go-specific flow analysis support methods."""
 
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+_GO_TYPE_NODES = (
+    "type_identifier",
+    "pointer_type",
+    "slice_type",
+    "map_type",
+    "qualified_type",
+    "generic_type",
+)
+
+
+def _go_base_type(type_text: Optional[str]) -> Optional[str]:
+    """*T and T[int] share T's methods, so look them up as T."""
+    if not type_text:
+        return type_text
+    base = type_text.lstrip("*").strip()
+    bracket = base.find("[")
+    # leave map[K]V, func([]T) etc. alone
+    if bracket > 0 and base[:bracket].replace(".", "").isidentifier() and base[:bracket] != "map":
+        base = base[:bracket]
+    return base or None
+
+
+def _go_composite_literal_type(expr: Any, get_node_text_fn: Callable[[Any], str]) -> Optional[str]:
+    """Type name for T{} or &T{}."""
+    if expr.type == "unary_expression" and expr.child_count == 2:
+        if get_node_text_fn(expr.children[0]) == "&":
+            expr = expr.children[1]
+    if expr.type != "composite_literal":
+        return None
+    type_node = expr.child_by_field_name("type")
+    if type_node is not None and type_node.type in ("type_identifier", "generic_type"):
+        return _go_base_type(get_node_text_fn(type_node))
+    return None
 
 
 def extract_go_parameter_types(
@@ -23,14 +57,8 @@ def extract_go_parameter_types(
                         for subchild in param_child.children:
                             if subchild.type == "identifier":
                                 param_names.append(get_node_text_fn(subchild))
-                            elif subchild.type in [
-                                "type_identifier",
-                                "pointer_type",
-                                "slice_type",
-                                "map_type",
-                                "qualified_type",
-                            ]:
-                                type_name = get_node_text_fn(subchild)
+                            elif subchild.type in _GO_TYPE_NODES:
+                                type_name = _go_base_type(get_node_text_fn(subchild))
                         for name in param_names:
                             if type_name:
                                 param_types[name] = type_name
@@ -65,24 +93,15 @@ def extract_go_assignment_type(node: Any, get_node_text_fn) -> Tuple[Optional[st
         for child in node.children:
             if child.type == "identifier" and var_name is None:
                 var_name = get_node_text_fn(child)
-            elif child.type in [
-                "type_identifier",
-                "pointer_type",
-                "slice_type",
-                "map_type",
-                "qualified_type",
-            ]:
-                type_name = get_node_text_fn(child)
+            elif child.type in _GO_TYPE_NODES:
+                type_name = _go_base_type(get_node_text_fn(child))
         # If no explicit type, try to infer from composite literal
         if var_name and not type_name:
             for child in node.children:
-                if child.type == "expression_list":
-                    for expr in child.children:
-                        if expr.type == "composite_literal":
-                            for lit_child in expr.children:
-                                if lit_child.type == "type_identifier":
-                                    type_name = get_node_text_fn(lit_child)
-                                    break
+                if child.type == "expression_list" and child.named_child_count:
+                    type_name = _go_composite_literal_type(
+                        child.named_children[0], get_node_text_fn
+                    )
 
     elif node.type == "short_var_declaration":
         # x := SomeType{} or x := NewSomeType()
@@ -102,11 +121,8 @@ def extract_go_assignment_type(node: Any, get_node_text_fn) -> Tuple[Optional[st
                     break
             # Try to get type from right side
             for child in right.children:
-                if child.type == "composite_literal":
-                    for lit_child in child.children:
-                        if lit_child.type == "type_identifier":
-                            type_name = get_node_text_fn(lit_child)
-                            break
+                if child.type in ("composite_literal", "unary_expression"):
+                    type_name = _go_composite_literal_type(child, get_node_text_fn)
                 elif child.type == "call_expression":
                     # x := NewFoo() -> infer Foo if function starts with "New"
                     if child.children:
@@ -126,10 +142,8 @@ def get_go_parameter_names(node: Any, function_start_line: int, get_node_text_fn
         node.type in ["function_declaration", "method_declaration"]
         and node.start_point[0] == function_start_line
     ):
-        # For methods, skip the receiver parameter list (first one)
-        param_lists = [c for c in node.children if c.type == "parameter_list"]
-        # Last parameter_list is the actual params (first is receiver for methods)
-        target_list = param_lists[-1] if param_lists else None
+        # not the last parameter_list: that's the result list for (string, error)
+        target_list = node.child_by_field_name("parameters")
 
         if target_list:
             for param_child in target_list.children:
