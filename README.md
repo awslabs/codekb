@@ -91,7 +91,7 @@ flowchart LR
    source and archives a copy in S3. Saved Git tokens are encrypted with a KMS key.
 2. **Parse.** Tree-sitter parsers extract the functions, classes and modules in each
    [supported language](docs/languages.md), plus the call graph between them.
-3. **Summarize and index.** LLM on Amazon Bedrock describes what each function
+3. **Summarize and index.** An LLM on Amazon Bedrock describes what each function
    does. It works from the deepest callees up, so each caller's description builds on
    its callees' descriptions. A Bedrock Guardrail masks secrets and PII before the
    source reaches the model. Titan embeds the descriptions into S3 Vectors, and the
