@@ -46,6 +46,7 @@ export class EdgeStack extends cdk.Stack {
       props.loadBalancer,
       {
         protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+        readTimeout: cdk.Duration.seconds(120),
       },
     );
 

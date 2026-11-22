@@ -69,6 +69,21 @@
 #
 set -euo pipefail
 
+usage() {
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help)    usage; exit 0 ;;
+    *) echo "Unknown argument: '$1'" >&2
+       echo "" >&2
+       usage >&2
+       exit 1 ;;
+  esac
+  shift
+done
+
 # ── Config ───────────────────────────────────────────────────────────────────
 PROJECT="${CODEKB_PROJECT:-AwsCodeKb}"
 STAGE="${CODEKB_STAGE:-alpha}"

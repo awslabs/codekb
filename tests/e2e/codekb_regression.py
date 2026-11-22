@@ -2167,16 +2167,13 @@ def phase_upload_space(ctx: Context) -> None:
         )
 
     with ctx.check("POST /api/spaces/upload by a non-owner is rejected"):
-        if ctx.args.token:
-            raise Skipped(
-                "needs two identities (X-User-Identity mode); --token supplies only one"
-            )
-        owner = ctx.args.user_identity
-        attacker = Client(
-            ctx.client.base_url,
-            user_identity=f"attacker-{owner}",
-            timeout=ctx.client.timeout,
-        )
+        attacker = _authz_other_client(ctx)
+        if attacker is None:
+            raise Skipped("needs a second identity: pass --second-token with --token")
+        rows = expect_list(expect_status(client.get("/api/spaces", timeout=120), 200))
+        row = next((r for r in rows if r.get("space_id") == ctx.upload_space_id), None)
+        expect(row is not None, f"{ctx.upload_space_id} missing from GET /api/spaces")
+        owner = row.get("created_by")
         resp = attacker.post(
             "/api/spaces/upload",
             json_body={

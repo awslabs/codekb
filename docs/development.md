@@ -7,7 +7,7 @@
 
 For backend work, install Python 3.11 and
 [uv](https://docs.astral.sh/uv/getting-started/installation/). Frontend work needs
-Node.js 20. Running CodeKB or its end-to-end tests also needs the AWS resources
+Node.js 22.12 or later. Running CodeKB or its end-to-end tests also needs the AWS resources
 and credentials in [Local setup](local.md#prerequisites).
 
 ---

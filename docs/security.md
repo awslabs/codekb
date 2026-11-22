@@ -129,13 +129,16 @@ For a complete removal:
 
 1. Stop CodeKB so it can't write new data.
 2. Delete every version and delete marker from the versioned knowledge-base
-   bucket. `aws s3 rm --recursive` removes only the current view and is not enough.
+   bucket, then delete the bucket. `aws s3 rm --recursive` removes only the
+   current view and is not enough.
 3. Delete the S3 Vectors index, then its vector bucket.
 4. Empty every version from the retained S3 access-log bucket, then delete it.
 5. If CodeKB created them and nothing else uses them, delete the retained Cognito
    user pool and OIDC client-secret.
 6. Only after all encrypted Git-token objects and their versions are gone,
    schedule deletion of the Git-credentials KMS key (minimum 7 days).
+7. For a CDK deployment, delete the container images each deploy pushed to the
+   CDK bootstrap repository, `cdk-<qualifier>-container-assets-<account>-<region>`.
 
 These actions are irreversible. Use the AWS console or your organization's
 resource-removal workflow so you can inspect each retained resource, account and
