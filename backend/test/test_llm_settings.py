@@ -67,11 +67,11 @@ class TestDefaults:
         s = resolve(Workload.SUMMARIZATION)
 
         assert s.model_id == OPUS_46
-        assert s.max_tokens == 65536
+        assert s.max_tokens == 128000
         assert s.thinking == MODEL_DEFAULT
         assert s.effort is None
         # Byte-identical to the body sent before these settings existed.
-        assert anthropic_request_fields(s) == {"max_tokens": 65536}
+        assert anthropic_request_fields(s) == {"max_tokens": 128000}
 
     def test_business_context_keeps_its_own_max_tokens(self, load):
         # Today's 2048 is the workload's own YAML value, so the shared
@@ -345,20 +345,20 @@ class TestStartupProbe:
         assert client.bodies == []
 
     def test_one_call_per_distinct_combination(self, load):
-        # Summarization and overview share 65536; business vocabulary (2048) and
+        # Summarization and overview share 128000; business vocabulary (2048) and
         # chat (16000) have their own max_tokens.
         load(CODEKB_LLM_STARTUP_CHECK="true")
         client = _RecordingClient()
 
         self._probe(client)
 
-        assert sorted(b["max_tokens"] for b in client.bodies) == [2048, 16000, 65536]
+        assert sorted(b["max_tokens"] for b in client.bodies) == [2048, 16000, 128000]
 
     def test_identical_settings_share_one_call(self, load):
         load(
             CODEKB_LLM_STARTUP_CHECK="true",
-            CODEKB_BUSINESS_CONTEXT_MAX_TOKENS="65536",
-            CODEKB_CHAT_MAX_TOKENS="65536",
+            CODEKB_BUSINESS_CONTEXT_MAX_TOKENS="128000",
+            CODEKB_CHAT_MAX_TOKENS="128000",
         )
         client = _RecordingClient()
 

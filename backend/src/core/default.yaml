@@ -243,7 +243,7 @@ llm:
     model_id: "us.anthropic.claude-opus-4-6-v1"
     # Hard cap on output tokens per call, thinking included.
     # Env: CODEKB_BEDROCK_MAX_TOKENS
-    max_tokens: 65536
+    max_tokens: 128000
     # thinking.type sent to the model. model_default sends no thinking field,
     # so the model's own default applies: no thinking on Claude Opus 4.8 and
     # earlier, adaptive thinking on Claude 5.x. Any other value (adaptive,

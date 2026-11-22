@@ -130,6 +130,17 @@ _TOKEN_SAFETY_MARGIN = 0.10
 # the operator's token limit.
 _INSTRUCTION_OVERHEAD_WORDS = len(build_prompt(_DESCRIPTION_PROMPT, "").split())
 
+# Outcome of one describe call — drives the adaptive retry. OK: valid JSON (may
+# still omit some ids). TRUNCATED: the model hit its output max_tokens, so the
+# JSON was cut — shrink what we ask for and retry. UNPARSEABLE: invalid JSON that
+# recovery could not salvage, with a normal stop (e.g. bad escaping) — also worth
+# shrinking. REFUSED: a safety decline — shrinking won't help, don't retry it.
+_OUTCOME_OK = "ok"
+_OUTCOME_TRUNCATED = "truncated"
+_OUTCOME_UNPARSEABLE = "unparseable"
+_OUTCOME_REFUSED = "refused"
+_SHRINKABLE_OUTCOMES = (_OUTCOME_TRUNCATED, _OUTCOME_UNPARSEABLE)
+
 
 class TopDownSummarizer:
     """Executes top-down summarization algorithm using LLM.
@@ -418,21 +429,26 @@ class TopDownSummarizer:
                     format_payload(response_body),
                 )
 
-            # InvokeModel API has different response formats based on the model
+            # InvokeModel API has different response formats based on the model.
+            # stop_reason is normalized to the Anthropic vocabulary ("max_tokens",
+            # "refusal", "end_turn", ...) so callers can detect output truncation.
             if "qwen" in model_id.lower():
                 text = response_body["choices"][0]["message"]["content"]
+                finish = response_body["choices"][0].get("finish_reason")
+                stop_reason = "max_tokens" if finish == "length" else finish
             else:
                 text = None
+                stop_reason = response_body.get("stop_reason")
                 for block in response_body["content"]:
                     if block.get("type") == "text":
                         text = block["text"]
                         break
                 if text is None:
-                    if response_body.get("stop_reason") == "max_tokens":
+                    if stop_reason == "max_tokens":
                         raise max_tokens_error(self._llm)
                     raise ValueError("No text content block in Bedrock response")
             self._circuit_breaker.record_success()
-            return text
+            return text, stop_reason
         except Exception as e:
             elapsed_ms = (time.perf_counter() - t0) * 1000
             settings_error = settings_error_from_bedrock(e, self._llm)
@@ -489,9 +505,16 @@ class TopDownSummarizer:
 
         return recovered or None
 
-    def _generate_descriptions(self, call_graph_data: str) -> Dict[str, str]:
-        """Generate business descriptions for ALL functions in the call graph using LLM."""
-        response = self._call_bedrock(_DESCRIPTION_PROMPT, call_graph_data)
+    def _generate_descriptions(self, call_graph_data: str) -> tuple[Dict[str, str], str]:
+        """Describe the call graph via the LLM; return (descriptions, outcome).
+
+        ``outcome`` (one of the _OUTCOME_* constants) tells the caller whether an
+        empty/partial result was a truncation (shrink and retry), an unparseable
+        response, a refusal (don't retry), or a clean result that merely omitted
+        some ids. Valid JSON is always OK even if the model stopped at max_tokens
+        on a boundary — we got usable descriptions.
+        """
+        response, stop_reason = self._call_bedrock(_DESCRIPTION_PROMPT, call_graph_data)
         try:
             json_str = response.strip()
             if "```json" in json_str:
@@ -505,23 +528,29 @@ class TopDownSummarizer:
             end = json_str.rfind("}")
             if start != -1 and end != -1:
                 json_str = json_str[start : end + 1]
-            return json.loads(json_str, strict=False)
+            return json.loads(json_str, strict=False), _OUTCOME_OK
         except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse LLM response as JSON: {e}")
+            logger.warning(f"Failed to parse LLM response as JSON: {e} (stop_reason={stop_reason})")
             logger.warning(f"Response preview: {response[:500]}...")
-            recovered = self._recover_truncated_json(json_str)
+            recovered = self._recover_truncated_json(json_str) or {}
             if recovered:
                 logger.warning(
-                    f"Recovered {len(recovered)} descriptions from truncated JSON "
+                    f"Recovered {len(recovered)} descriptions from broken JSON "
                     f"(some may be missing)"
                 )
-                return recovered
-            logger.error("Could not recover any descriptions from truncated response")
-            return {}
+            else:
+                logger.error("Could not recover any descriptions from the response")
+            if stop_reason == "max_tokens":
+                outcome = _OUTCOME_TRUNCATED
+            elif stop_reason == "refusal":
+                outcome = _OUTCOME_REFUSED
+            else:
+                outcome = _OUTCOME_UNPARSEABLE
+            return recovered, outcome
         except Exception as e:
             logger.error(f"Unexpected error parsing LLM response: {e}")
             logger.error(f"Response preview: {response[:500]}...")
-            return {}
+            return {}, (_OUTCOME_REFUSED if stop_reason == "refusal" else _OUTCOME_UNPARSEABLE)
 
     def _is_cached(self, component_id: str) -> bool:
         """Check if component is in local cache."""
@@ -564,11 +593,12 @@ class TopDownSummarizer:
         """Summarize one high-depth function with its full call graph.
 
         The graph presents the target plus its callees as SOURCE functions, and
-        the prompt asks for a description of each. The model can omit some
-        (truncated input, output cut at max_tokens, or a misnamed ID); this
-        reconciles the returned keys against the SOURCE functions the graph asked
-        for and re-requests the missing ones in batch_size chunks. Disabled when
-        batch_reconcile_max_rounds is 1.
+        the prompt asks for a description of each. If the model's OUTPUT is
+        truncated (max_tokens), the entry is re-packed one call-tree level
+        shallower — fewer SOURCE functions ⇒ shorter output — down to the entry
+        alone, whose single description cannot truncate. Dropped callees are
+        described on their own depth pass, so nothing is lost. Any ids still
+        missing are then reconciled (which adaptively splits on further failure).
 
         Safe to call concurrently (shared state is mutated only via the locked
         _index_descriptions). Catches per-component errors so one failure never
@@ -576,19 +606,25 @@ class TopDownSummarizer:
         """
         try:
             start_time = time.time()
-            # The packer renders the entry point at the deepest call depth that
-            # fits the token budget; callees past that depth are shown as
-            # signatures (not requested here — they are described on their own
-            # depth pass). `source_ids` is exactly what this call asks for, so
-            # reconcile can never chase a function that was never fully shown.
             calls = self._packer.build_individual(comp_id)
             logger.info(f"{comp_id}: graph built in {time.time() - start_time:.1f}s")
 
             freshly = 0
             requested: list[str] = []
             for call in calls:
-                freshly += self._run_packed_call(call, comp_id)
+                count, outcome = self._run_packed_call(call, comp_id)
+                freshly += count
                 requested.extend(call.source_ids)
+                # Output truncated: re-pack one level shallower and retry, down to
+                # the entry alone (depth 0). Each retry shows fewer SOURCE
+                # functions, so the output shrinks until it fits max_tokens.
+                cap = call.depth - 1
+                while outcome == _OUTCOME_TRUNCATED and cap >= 0 and not self._should_stop():
+                    for rc in self._packer.build_individual(comp_id, depth_cap=cap):
+                        count, outcome = self._run_packed_call(rc, f"{comp_id} depth<={cap}")
+                        freshly += count
+                        requested.extend(rc.source_ids)
+                        cap = rc.depth - 1
 
             if self._batch_reconcile_max_rounds > 1 and requested:
                 with self._lock:
@@ -648,18 +684,18 @@ class TopDownSummarizer:
         nothing and returns 0.
         """
         llm_start = time.time()
-        descriptions = self._generate_descriptions(llm_input)
+        descriptions, outcome = self._generate_descriptions(llm_input)
         llm_time = time.time() - llm_start
         logger.info(
             f"{label}: llm={llm_time:.1f}s, input={len(llm_input)} chars, "
-            f"returned={len(descriptions)} description(s)"
+            f"returned={len(descriptions)} description(s) [{outcome}]"
         )
         if not descriptions:
-            logger.warning(f"No descriptions returned for {label}")
-            return 0
-        return self._index_descriptions(descriptions)
+            logger.warning(f"No descriptions returned for {label} [{outcome}]")
+            return 0, outcome
+        return self._index_descriptions(descriptions), outcome
 
-    def _run_packed_call(self, call: "PackedCall", label: str) -> int:
+    def _run_packed_call(self, call: "PackedCall", label: str) -> tuple[int, str]:
         """Run one packed call, recording reduced fidelity when it was floored.
 
         A floored call could not fit even at depth 0, so the function is described
@@ -685,62 +721,73 @@ class TopDownSummarizer:
             # call: there is nothing to ask, so an empty response would be
             # expected, not a failure. Saves a redundant request and avoids a
             # spurious "No descriptions returned" warning.
-            return 0
+            return 0, _OUTCOME_OK
         return self._generate_and_index(call.text, label)
 
     def _reconcile(self, target_ids: list[str], label: str) -> int:
-        """Describe target_ids, re-requesting any the model omits, bounded.
+        """Describe target_ids, adaptively shrinking on failure. Never spins.
 
-        The model is asked to describe every function, but it can return fewer
-        than requested: input truncation (input token budget) drops the tail of a
-        large call, the JSON output can be cut at max_tokens, or the model omits
-        or misnames some IDs. After each call this reconciles the returned keys
-        against target_ids: any target not yet in the indexed cache is
-        re-requested. Re-requests shrink the input (callees indexed in earlier
-        rounds come back as CACHED DESCRIPTION), so the loop converges. It is
-        bounded by batch_reconcile_max_rounds so a function the model never
-        returns cannot spin forever.
+        The model can return fewer descriptions than requested: its OUTPUT is cut
+        at max_tokens (truncated JSON), it emits unparseable JSON, it refuses, or
+        it simply omits some ids. This drives a work queue of id-groups and reacts
+        to each call's outcome:
 
-        Safe to call concurrently; per-round errors are caught so one bad round
-        never aborts the run. Returns the count freshly indexed.
+          * TRUNCATED / UNPARSEABLE with >1 target still missing → the output was
+            too big or broke, so SPLIT the group in half and retry the halves.
+            This bottoms out at one function per call — a single description
+            cannot exceed max_tokens and is trivially valid JSON.
+          * Clean response that still omitted some, but this call DID index
+            something (progress) → retry the remainder, decrementing a bounded
+            try budget.
+          * No progress and nothing to split (a single target that still fails, a
+            refusal, or a clean round that indexed nothing new) → give up on
+            those ids rather than re-send the identical prompt. They surface as
+            gaps in the run-level coverage check.
+
+        Each split strictly halves the group and each non-split retry decrements
+        ``tries``, so the queue is finite. Safe to call concurrently; per-call
+        errors are caught. Returns the count freshly indexed.
         """
-        remaining = list(target_ids)
+        from collections import deque
+
+        # Queue of (ids, tries). tries bounds re-sends of an unsplittable group.
+        pending: deque[tuple[list[str], int]] = deque(
+            [(list(target_ids), self._batch_reconcile_max_rounds)]
+        )
         total_freshly = 0
 
-        for round_num in range(1, self._batch_reconcile_max_rounds + 1):
-            if self._should_stop():
-                break
+        while pending and not self._should_stop():
+            ids, tries = pending.popleft()
+            with self._lock:
+                ids = [i for i in ids if i not in self._indexed_cache]
+            if not ids or tries <= 0:
+                continue
             try:
-                # Pack the remaining functions into one or more fitting calls.
-                # Each round repacks: callees indexed earlier now render as
-                # CACHED DESCRIPTION, so inputs shrink and the loop converges.
-                for call in self._packer.build_batch(remaining):
+                for call in self._packer.build_batch(ids):
                     if self._should_stop():
                         break
-                    total_freshly += self._run_packed_call(
-                        call,
-                        f"{label} round {round_num}/{self._batch_reconcile_max_rounds}",
-                    )
+                    count, outcome = self._run_packed_call(call, f"{label} ({len(ids)} fn)")
+                    total_freshly += count
+                    with self._lock:
+                        still = [i for i in call.source_ids if i not in self._indexed_cache]
+                    if not still:
+                        continue
+                    if outcome in _SHRINKABLE_OUTCOMES and len(still) > 1:
+                        mid = len(still) // 2          # split: strictly smaller groups
+                        pending.append((still[:mid], tries))
+                        pending.append((still[mid:], tries))
+                    elif count > 0:
+                        pending.append((still, tries - 1))   # progress → retry the rest
+                    # else: no progress and unsplittable → give up (becomes a gap)
             except Exception as e:
-                logger.error(
-                    f"Summarization failed ({label} round {round_num}): {e}", exc_info=True
-                )
+                logger.error(f"Summarization failed ({label}): {e}", exc_info=True)
 
-            # A requested function is done once it is in the indexed cache —
-            # indexed this round, or by a concurrent worker as a callee.
-            with self._lock:
-                remaining = [c for c in remaining if c not in self._indexed_cache]
-            if not remaining:
-                break
-            logger.info(
-                f"{label}: re-requesting {len(remaining)} function(s) the model did not return"
-            )
-
-        if remaining:
+        with self._lock:
+            leftover = [t for t in target_ids if t not in self._indexed_cache]
+        if leftover:
             logger.warning(
-                f"{label}: left {len(remaining)} function(s) unsummarized after "
-                f"{self._batch_reconcile_max_rounds} round(s): "
-                f"{remaining[:10]}{'...' if len(remaining) > 10 else ''}"
+                f"{label}: left {len(leftover)} function(s) unsummarized: "
+                f"{leftover[:10]}{'...' if len(leftover) > 10 else ''}"
             )
         return total_freshly
 
@@ -775,7 +822,11 @@ class TopDownSummarizer:
         candidates = list(all_call_depths) if targets is None else [
             c for c in all_call_depths if c in targets
         ]
-        total_funcs = len(self._eligible_components(candidates, count_skipped=False))
+        # Functions that must end up with a description (post low-relevance
+        # filter). The run-level coverage gate at the end checks every one of
+        # these made it into the index.
+        eligible_targets = set(self._eligible_components(candidates, count_skipped=False))
+        total_funcs = len(eligible_targets)
         functions_done = 0
         logger.info(
             f"Processing {total_funcs} functions across {max_depth + 1} depths "
@@ -920,8 +971,24 @@ class TopDownSummarizer:
         self.stats["token_usage"] = self.token_usage.to_dict()
         self.stats["llm_workload"] = workload_record(self._llm, self.token_usage, self._bedrock_region)
         self.stats["region"] = self._bedrock_region
+
+        # Coverage gate: every eligible target must have a description. Report
+        # coverage (e.g. "567/567") and, if any are missing on a run that did NOT
+        # already stop early, fail the step the same way a stopped-early run does.
+        with self._lock:
+            covered = eligible_targets & self._indexed_cache
+            uncovered = sorted(eligible_targets - self._indexed_cache)
+        self.stats["coverage"] = f"{len(covered)}/{len(eligible_targets)}"
+        if uncovered and not self._stop_reason:
+            self._stop_reason = "incomplete_coverage"
+            logger.error(
+                f"Summarization incomplete: {len(uncovered)} of {len(eligible_targets)} "
+                f"function(s) have no description: "
+                f"{uncovered[:10]}{'...' if len(uncovered) > 10 else ''}"
+            )
+
         # Distinguish a stopped-early run from a completed one for callers/UI.
-        # None == ran to completion; otherwise the guardrail reason.
+        # None == ran to completion; otherwise the guardrail / coverage reason.
         self.stats["stopped_early"] = self._stop_reason
         logger.info(
             f"Summarization token usage: {self.token_usage.totals()} "

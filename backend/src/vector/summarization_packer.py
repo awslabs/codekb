@@ -112,6 +112,10 @@ class PackedCall:
     floored: bool = False
     source_truncated: bool = False
     tree_truncated: bool = False
+    # The call-tree depth this was rendered at (individual calls only; 0 for a
+    # floor). The driver uses it to retry one level shallower when the model's
+    # OUTPUT is truncated — fewer SOURCE functions shown means shorter output.
+    depth: int = 0
 
 
 class SummarizationPacker:
@@ -163,14 +167,19 @@ class SummarizationPacker:
 
     # ── public API ────────────────────────────────────────────────────────
 
-    def build_individual(self, entry_id: str) -> List[PackedCall]:
+    def build_individual(self, entry_id: str, *, depth_cap: Optional[int] = None) -> List[PackedCall]:
         """One entry point → one call rendered at the deepest depth that fits.
 
-        Tries ``max_depth`` down to 0 and keeps the deepest render within budget.
-        Callees past the chosen depth appear as one-line signatures (not
+        Tries the deepest depth down to 0 and keeps the deepest render within
+        budget. Callees past the chosen depth appear as one-line signatures (not
         requested — they are described on their own depth pass). If even depth 0
         (the entry point's own source) overflows, its body is truncated with a
         marker and the call is flagged ``floored``.
+
+        ``depth_cap`` caps the deepest depth tried (default ``max_depth``). The
+        driver lowers it to retry one level shallower when the model's OUTPUT was
+        truncated: fewer SOURCE functions shown ⇒ fewer descriptions ⇒ shorter
+        output. The chosen depth is recorded on the returned call's ``depth``.
         """
         graph = self._fetch_graph(entry_id, self._max_depth)
         if graph is None:
@@ -180,11 +189,12 @@ class SummarizationPacker:
             # for logging the reason at fetch time (it alone knows the cause).
             return []
 
-        for depth in range(self._max_depth, -1, -1):
+        top = self._max_depth if depth_cap is None else min(self._max_depth, max(0, depth_cap))
+        for depth in range(top, -1, -1):
             call = self._render_tree(graph, depth_limit=depth)
             wrapped = self._wrap([call.text])
             if self._fits(wrapped):
-                return [replace(call, text=wrapped)]
+                return [replace(call, text=wrapped, depth=depth)]
 
         # Floor: even depth 0 overflows — truncate the entry point's own body.
         # _floor_call returns an already-wrapped call.

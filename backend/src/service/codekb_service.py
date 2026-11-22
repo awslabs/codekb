@@ -1989,7 +1989,10 @@ class CodeKBService:
                     "SUMMARIZING",
                     "summarize",
                     "failed",
-                    extra={"summarize_remedy": remedy},
+                    extra={
+                        "summarize_remedy": remedy,
+                        "summarize_coverage": summary_stats.get("coverage"),
+                    },
                 )
                 logger.warning(
                     f"[worker] Summarization stopped early for {space_id}: "
@@ -2001,7 +2004,10 @@ class CodeKBService:
                     "SUMMARIZING",
                     "summarize",
                     "completed",
-                    extra={"vector_count": summary_stats["total_analyzed"]},
+                    extra={
+                        "vector_count": summary_stats["total_analyzed"],
+                        "summarize_coverage": summary_stats.get("coverage"),
+                    },
                 )
                 logger.info(
                     f"[worker] Summarization complete: "

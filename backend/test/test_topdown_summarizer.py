@@ -2,7 +2,11 @@ import logging
 
 import pytest
 
-from src.vector.topdown_summarizer import TopDownSummarizer
+from src.vector.topdown_summarizer import (
+    TopDownSummarizer,
+    _OUTCOME_OK,
+    _OUTCOME_TRUNCATED,
+)
 from src.vector.summarization_packer import PackedCall
 from test.bedrock_fakes import (
     CapturingBedrockClient,
@@ -80,7 +84,7 @@ class TestTopDownSummarizerTokenCapture:
             )
         )
 
-        out = s._call_bedrock("prompt", "input text")
+        out, _ = s._call_bedrock("prompt", "input text")
 
         assert out == "a description"
         totals = s.token_usage.totals()
@@ -102,7 +106,7 @@ class TestTopDownSummarizerTokenCapture:
         s = self._summarizer()
         s._bedrock_client = FakeBedrockClient(anthropic_body("ok"))
 
-        out = s._call_bedrock("p", "i")
+        out, _ = s._call_bedrock("p", "i")
 
         assert out == "ok"
         assert s.token_usage.is_empty()
@@ -130,7 +134,7 @@ class TestTopDownSummarizerResponseParsing:
             anthropic_body("the answer", thinking="internal reasoning")
         )
 
-        assert s._call_bedrock("p", "i") == "the answer"
+        assert s._call_bedrock("p", "i")[0] == "the answer"
 
     def test_thinking_text_is_never_returned(self):
         s = self._summarizer()
@@ -138,7 +142,7 @@ class TestTopDownSummarizerResponseParsing:
             anthropic_body("the answer", thinking="internal reasoning")
         )
 
-        assert "internal reasoning" not in s._call_bedrock("p", "i")
+        assert "internal reasoning" not in s._call_bedrock("p", "i")[0]
 
     def test_response_with_no_text_block_is_rejected(self):
         s = self._summarizer()
@@ -281,7 +285,7 @@ class TestTopDownSummarizerGuardrails:
         s._circuit_breaker = CircuitBreaker(1)
         s._bedrock_client = FakeBedrockClient(anthropic_body("ok"))
 
-        assert s._call_bedrock("p", "i") == "ok"
+        assert s._call_bedrock("p", "i")[0] == "ok"
         assert not s._circuit_breaker.is_open
 
 
@@ -775,7 +779,7 @@ class TestSummarizeTargetedSkipsDescribedTargets:
 
         def fake_generate(text):
             prompts.append(text)
-            return next(replies)
+            return next(replies), _OUTCOME_OK
 
         s._generate_descriptions = fake_generate
         progress: list[tuple[int, int]] = []
@@ -820,7 +824,8 @@ class TestSummarizeTargetedRelevanceFilter:
 
         def fake_generate(text):
             prompts.append(text)
-            return {"high": "H desc"} if "high" in text else {"low": "L desc"}
+            d = {"high": "H desc"} if "high" in text else {"low": "L desc"}
+            return d, _OUTCOME_OK
 
         s._generate_descriptions = fake_generate
         progress: list[tuple[int, int]] = []
@@ -874,7 +879,7 @@ class TestSummarizeTargetedConcurrency:
 
         def fake_generate(text):
             barrier.wait()
-            return _describe_defs(text)
+            return _describe_defs(text), _OUTCOME_OK
 
         s, service = self._summarizer({depth: ["a", "b"]}, fake_generate)
         asyncio.run(s.summarize_all(targets={"a", "b"}, prior_descriptions={}))
@@ -887,7 +892,7 @@ class TestSummarizeTargetedConcurrency:
         def fake_generate(text):
             if "def a(" in text:
                 raise RuntimeError("Bedrock throttled")
-            return _describe_defs(text)
+            return _describe_defs(text), _OUTCOME_OK
 
         s, service = self._summarizer({3: ["a", "b"]}, fake_generate)
         stats = asyncio.run(s.summarize_all(targets={"a", "b"}, prior_descriptions={}))
@@ -904,7 +909,7 @@ class TestSummarizeTargetedConcurrency:
             if "def a(" in text:
                 s._circuit_breaker.record_failure()
                 raise RuntimeError("Bedrock down")
-            return _describe_defs(text)
+            return _describe_defs(text), _OUTCOME_OK
 
         s, service = self._summarizer({3: ["a", "b"], 2: ["c"]}, fake_generate)
         s._circuit_breaker = CircuitBreaker(1)
@@ -912,3 +917,76 @@ class TestSummarizeTargetedConcurrency:
 
         assert "c" not in service.indexed
         assert stats["stopped_early"] == "circuit_breaker_open"
+
+
+class TestCoverageGateAndAdaptiveReconcile:
+    """Strict coverage gate + adaptive-shrink reconcile (customer-reported fix)."""
+
+    def _run(self, by_depth, targets, fake_generate, **attrs):
+        import asyncio
+
+        service = _IndexingGraphService(by_depth)
+        s = TopDownSummarizer("/tmp/project", "space", codekb_service=service)
+        s._batch_depth_threshold, s._batch_size = 5, 100  # force the batched path
+        for k, v in attrs.items():
+            setattr(s, k, v)
+        s._generate_descriptions = fake_generate
+        stats = asyncio.run(s.summarize_all(targets=set(targets), prior_descriptions={}))
+        return service, stats
+
+    def _present(self, text, targets):
+        return [t for t in targets if f'"id": "{t}"' in text]
+
+    def test_incomplete_coverage_fails_the_run_and_reports_coverage(self):
+        # The model never returns a description for "b" → strict gate fails.
+        def fake(text):
+            described = {t: f"{t} desc" for t in self._present(text, ["a", "b"]) if t != "b"}
+            return described, _OUTCOME_OK
+
+        service, stats = self._run({0: ["a", "b"]}, ["a", "b"], fake)
+
+        assert service.indexed == ["a"]
+        assert stats["coverage"] == "1/2"
+        assert stats["stopped_early"] == "incomplete_coverage"
+
+    def test_full_coverage_completes_and_reports_n_over_n(self):
+        def fake(text):
+            return {t: f"{t} desc" for t in self._present(text, ["a", "b"])}, _OUTCOME_OK
+
+        service, stats = self._run({0: ["a", "b"]}, ["a", "b"], fake)
+
+        assert sorted(service.indexed) == ["a", "b"]
+        assert stats["coverage"] == "2/2"
+        assert stats["stopped_early"] is None
+
+    def test_truncated_batch_splits_until_each_fits_one_at_a_time(self):
+        # A call with >1 function "truncates" (empty + TRUNCATED); a single
+        # function succeeds. Adaptive split must still cover all four.
+        ids = ["a", "b", "c", "d"]
+
+        def fake(text):
+            present = self._present(text, ids)
+            if len(present) > 1:
+                return {}, _OUTCOME_TRUNCATED          # output too big → cut
+            return {present[0]: f"{present[0]} desc"}, _OUTCOME_OK
+
+        service, stats = self._run({0: ids}, ids, fake)
+
+        assert sorted(service.indexed) == ids
+        assert stats["coverage"] == "4/4"
+        assert stats["stopped_early"] is None
+
+    def test_no_progress_round_does_not_resend_forever(self):
+        # The model returns valid JSON but never any of the requested ids. The
+        # loop must stop (no infinite identical re-send) and fail coverage.
+        calls = {"n": 0}
+
+        def fake(text):
+            calls["n"] += 1
+            return {}, _OUTCOME_OK
+
+        service, stats = self._run({0: ["a", "b"]}, ["a", "b"], fake)
+
+        assert service.indexed == []
+        assert stats["stopped_early"] == "incomplete_coverage"
+        assert calls["n"] <= 6  # bounded, not spinning
