@@ -28,38 +28,36 @@ from ...service.codekb_service import CodeKBService
 router = APIRouter()
 
 
-def _gate_members(hyperspace_id: str, request: Request, *, write: bool) -> None:
-    """Enforce READ (or WRITE) on every member space. No-op when authz is off.
+def _gate_members(hyperspace_id: str, request: Request, *, write: bool) -> dict:
+    """Return the config checked for READ (or WRITE) on every member space.
 
     Loads the hyperspace (404 if missing) and runs the all-or-nothing hyperspace
     gate: provider down → 503, else an expired token → 401, else the denied
     member ids are named in a 403. Sync — call via ``asyncio.to_thread``.
     """
-    # Authz off (the default): only the existence check matters, so read the raw
-    # config and skip the member S3 fan-out entirely.
-    if not require_authorization():
-        if CodeKBService.instance().read_hyperspace_config(hyperspace_id) is None:
-            raise HyperspaceNotFoundError(hyperspace_id)
-        return
-    ctx = current_auth_context(request)
     # Reuse the statuses get_hyperspace already fetched in parallel instead of
     # re-reading each one serially via ctx.space_status.
     status_sink: dict = {}
     cfg = CodeKBService.instance().get_hyperspace(hyperspace_id, status_sink=status_sink)  # raises HyperspaceNotFoundError
+    if not require_authorization():
+        return cfg
+    ctx = current_auth_context(request)
     ctx.preload_statuses(status_sink)
     members = [
         {**rec, "space_id": sid}
         for sid in (cfg.get("space_ids") or [])
         if (rec := ctx.space_status(sid)) is not None
     ]
-    # Fail closed on an empty member set (e.g. every member deleted): the gate
-    # would otherwise loop zero times and pass, serving the overview to anyone.
-    if not members:
-        raise HyperspaceAccessDenied("This hyperspace has no accessible member spaces.")
     if write:
         hyperspace_authz.check_write(ctx, members)
     else:
         hyperspace_authz.check_read(ctx, members)
+    # A missing member can still have contributed private content to the
+    # overview. Checking only the remaining members would widen access.
+    # Check after the gates above to preserve provider/credential error precedence.
+    if not members or len(members) != len(cfg.get("space_ids") or []):
+        raise HyperspaceAccessDenied("This hyperspace has missing or no accessible member spaces.")
+    return cfg
 
 
 def _member_readable(ctx, sid: str) -> bool:
@@ -263,9 +261,12 @@ async def get_hyperspace_overview_document(
     require_current_user(request)
     try:
         # Reading the overview exposes member content: require READ on every member.
-        await asyncio.to_thread(_gate_members, hyperspace_id, request, write=False)
+        cfg = await asyncio.to_thread(_gate_members, hyperspace_id, request, write=False)
         content = await asyncio.to_thread(
-            CodeKBService.instance().get_hyperspace_overview_document, hyperspace_id, doc_key
+            CodeKBService.instance().get_hyperspace_overview_document,
+            hyperspace_id,
+            doc_key,
+            config=cfg,
         )
         return PlainTextResponse(content, media_type="text/markdown")
     except HyperspaceNotFoundError:
@@ -273,3 +274,5 @@ async def get_hyperspace_overview_document(
             status_code=404,
             detail=f"Overview document not found: {doc_key} for hyperspace {hyperspace_id}",
         )
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
