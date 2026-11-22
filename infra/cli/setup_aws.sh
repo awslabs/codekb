@@ -371,6 +371,7 @@ cat > "${POLICY_FILE}" << POLICY
       "Sid": "S3VectorsData",
       "Effect": "Allow",
       "Action": [
+        "s3vectors:GetIndex",
         "s3vectors:PutVectors",
         "s3vectors:GetVectors",
         "s3vectors:QueryVectors",
@@ -406,7 +407,8 @@ cat > "${POLICY_FILE}" << POLICY
       "Effect": "Allow",
       "Action": [
         "kms:GenerateDataKey",
-        "kms:Decrypt"
+        "kms:Decrypt",
+        "kms:DescribeKey"
       ],
       "Resource": "${CODEKB_GIT_CREDENTIALS_KMS_KEY_ARN}"
     }${GUARDRAIL_POLICY_STMTS}
