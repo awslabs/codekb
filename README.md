@@ -142,6 +142,7 @@ Embeddings V2.
 | [FAQ](docs/faq.md) | Cost, sizing, refresh, exclusions, upgrades |
 | [Troubleshooting](docs/troubleshooting.md) | Common errors and their fixes |
 | [Development](docs/development.md) | Running from source, tests, how the image is built |
+| [Roadmap](ROADMAP.md) | What we're working on and planning next |
 
 ---
 
