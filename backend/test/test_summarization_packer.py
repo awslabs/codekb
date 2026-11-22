@@ -1,9 +1,13 @@
 """Unit tests for the token-aware summarization input packer.
 
 Synthetic call-graph dicts are injected via `fetch_graph`, so these exercise the
-fitting logic with no files, service, or Bedrock. The packer's budget is the
-character ceiling `max_input_chars`, so `budget_chars` maps directly to the limit.
+fitting logic with no files, service, or Bedrock. The packer's budget is a WORD
+count (`max_input_words`) — a model-agnostic proxy for tokens — so `budget_words`
+maps directly to the limit, and oversized fixtures use many whitespace-separated
+words (a long no-whitespace blob would count as a single word).
 """
+
+import json
 
 from src.vector.summarization_packer import SummarizationPacker
 
@@ -12,12 +16,16 @@ def _node(cid, src, *calls, ntype="function"):
     return {"id": cid, "type": ntype, "source": src, "calls": list(calls)}
 
 
-def _packer(trees, budget_chars, *, cache=None, max_depth=10):
+def _words(text):
+    return len(text.split())
+
+
+def _packer(trees, budget_words, *, cache=None, max_depth=10):
     return SummarizationPacker(
         fetch_graph=lambda cid, depth: trees.get(cid),
         description_cache=cache if cache is not None else {},
         max_depth=max_depth,
-        max_input_chars=budget_chars,
+        max_input_words=budget_words,
     )
 
 
@@ -40,59 +48,59 @@ def test_full_depth_fits_renders_everything_as_source():
 
 
 def test_tight_budget_drops_deepest_to_signature():
-    # A multi-line leaf so its SOURCE body is clearly larger than its one-line
-    # SIGNATURE — otherwise reducing depth would not shrink the render.
-    leaf = _node("leaf", "def leaf():\n" + "    total += step\n" * 25 + "    return total")
+    # A multi-line leaf so its SOURCE body is clearly larger (more words) than its
+    # one-line SIGNATURE — otherwise reducing depth would not shrink the render.
+    leaf = _node("leaf", "def leaf():\n" + "    total = total + step\n" * 25 + "    return total")
     mid = _node("mid", "def mid(): return leaf()", leaf)
     entry = _node("entry", "def entry(): return mid()", mid)
     trees = {"entry": entry}
 
-    # Measure the full and depth-1 renders; a budget at the depth-1 object size
-    # forces the leaf to drop to a signature while entry/mid stay SOURCE.
+    # Measure the full and depth-1 renders as the WRAPPED array the packer sizes;
+    # a budget at the depth-1 word count forces the leaf to drop to a signature
+    # while entry/mid stay SOURCE.
     p = _packer(trees, 0)
-    full_obj = p._render_tree(entry, depth_limit=10).text
-    d1_obj = p._render_tree(entry, depth_limit=1).text
-    assert len(d1_obj) < len(full_obj)
-    call = _packer(trees, len(d1_obj)).build_individual("entry")[0]
+    full_words = _words(p._wrap([p._render_tree(entry, depth_limit=10).text]))
+    d1_words = _words(p._wrap([p._render_tree(entry, depth_limit=1).text]))
+    assert d1_words < full_words
+    call = _packer(trees, d1_words).build_individual("entry")[0]
 
     # The deepest node is no longer requested, and appears as a signature.
     assert "leaf" not in call.source_ids
     assert "entry" in call.source_ids
     assert '"status": "SIGNATURE"' in call.text
     # Invariant: every requested id is rendered as a SOURCE function object.
-    import json
     by_id = {f["id"]: f for o in json.loads(call.text) for f in o["functions"]}
     for fid in call.source_ids:
         assert by_id[fid]["status"] == "SOURCE" and "source" in by_id[fid]
 
 
 def test_floor_truncates_single_oversized_function():
-    big = _node("entry", "x" * 5000)
-    call = _packer({"entry": big}, 500).build_individual("entry")[0]
+    big = _node("entry", "tok " * 5000)  # 5000 words, far over a tiny word budget
+    call = _packer({"entry": big}, 50).build_individual("entry")[0]
     assert call.floored
     assert "truncated to fit" in call.text
     assert call.source_ids == ["entry"]
-    assert "x" in call.text                 # a partial body survives
-    assert len(call.text) <= 500            # and stays within budget (incl. indentation)
+    assert "tok" in call.text                # a partial body survives
+    assert _words(call.text) <= 50           # and stays within the word budget
 
 
 def test_floor_within_budget_for_a_single_long_line():
-    # One line longer than the budget must still truncate within budget.
-    one_line = _node("entry", "Z" * 5000)
-    call = _packer({"entry": one_line}, 500).build_individual("entry")[0]
+    # Many words on effectively one line must still truncate within budget.
+    one_line = _node("entry", "Z " * 5000)
+    call = _packer({"entry": one_line}, 50).build_individual("entry")[0]
     assert call.floored
     assert "Z" in call.text
-    assert len(call.text) <= 500
+    assert _words(call.text) <= 50
 
 
 def test_oversized_batch_member_is_floored_regardless_of_order():
     small = _node("a", "def a(): pass")
-    huge = _node("b", "B" * 4000)  # exceeds budget alone
+    huge = _node("b", "B " * 4000)  # exceeds budget alone (4000 words)
     trees = {"a": small, "b": huge}
     for order in (["a", "b"], ["b", "a"]):
-        calls = _packer(trees, 500).build_batch(order)
+        calls = _packer(trees, 50).build_batch(order)
         # No call is ever over budget, and b is floored either way.
-        assert all(len(c.text) <= 500 for c in calls)
+        assert all(_words(c.text) <= 50 for c in calls)
         b_calls = [c for c in calls if c.source_ids == ["b"]]
         assert len(b_calls) == 1 and b_calls[0].floored
 
@@ -108,13 +116,13 @@ def test_batch_packs_all_members_when_they_fit():
 
 
 def test_batch_splits_when_over_budget_without_dropping_members():
-    a = _node("a", "A" * 300)
-    b = _node("b", "B" * 300)
+    a = _node("a", "aa " * 40)  # ~40-word bodies
+    b = _node("b", "bb " * 40)
     trees = {"a": a, "b": b}
-    # Size of a SINGLE member's rendered section.
+    # Word count of a SINGLE member's call; a budget just above it holds one member
+    # but not a second ~40-word member.
     single = _packer(trees, 10_000).build_batch(["a"])[0].text
-    # Budget holds one member comfortably but not a second ~300-char member.
-    calls = _packer(trees, len(single) + 100).build_batch(["a", "b"])
+    calls = _packer(trees, _words(single) + 3).build_batch(["a", "b"])
     assert len(calls) == 2
     # Every member still described across the calls — nothing dropped.
     assert {i for c in calls for i in c.source_ids} == {"a", "b"}
@@ -138,8 +146,6 @@ def test_shared_callee_rendered_once_per_batch_call():
 
 
 def test_output_is_json_array_of_graph_objects():
-    import json
-
     trees = _three_level()
     text = _packer(trees, 10_000).build_individual("entry")[0].text
     # A call's data block is a JSON array of call-graph objects; here, one object

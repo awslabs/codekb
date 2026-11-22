@@ -112,7 +112,7 @@ class TestCallSiteWiring:
         s._llm = LlmSettings(Workload.SUMMARIZATION, model_id="anthropic.claude", max_tokens=1024)
         s._settings_error = None
         s._bedrock_region = "us-east-1"
-        s._max_input_chars = 0
+        s._packer_word_budget = 0
         from src.core.circuit_breaker import CircuitBreaker
 
         s._token_budget = 0

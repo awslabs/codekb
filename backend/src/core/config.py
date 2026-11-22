@@ -540,6 +540,7 @@ class ConfigurationManager(IConfigurationManager):
         "CODEKB_BEDROCK_GUARDRAIL_ID": "llm.providers.bedrock.guardrail.id",
         "CODEKB_BEDROCK_GUARDRAIL_VERSION": "llm.providers.bedrock.guardrail.version",
         "CODEKB_SUMMARIZATION_CONCURRENCY": "summarization.concurrency",
+        "CODEKB_SUMMARIZATION_INPUT_TOKEN_BUDGET": "summarization.input_token_budget",
         "CODEKB_SUMMARIZATION_WARN_AFTER_STALE_S": "summarization.warn_after_stale_s",
         "CODEKB_SUMMARIZATION_FAIL_AFTER_STALE_S": "summarization.fail_after_stale_s",
         # Cognito auth
@@ -608,6 +609,7 @@ class ConfigurationManager(IConfigurationManager):
         "CODEKB_S3_READ_TIMEOUT",
         "CODEKB_S3_VECTORS_DEFAULT_TOP_K",
         "CODEKB_SUMMARIZATION_CONCURRENCY",
+        "CODEKB_SUMMARIZATION_INPUT_TOKEN_BUDGET",
         "CODEKB_SUMMARIZATION_WARN_AFTER_STALE_S",
         "CODEKB_SUMMARIZATION_FAIL_AFTER_STALE_S",
         "CODEKB_MAX_CACHED_SPACES",

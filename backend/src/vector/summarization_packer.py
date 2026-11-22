@@ -37,10 +37,11 @@ Two invariants hold for every call it emits:
     truncation can never make the model appear to "miss" something it was never
     shown.
 
-The budget is a single character ceiling: ``summarization.max_input_chars`` — the
-operator-tunable input cap that ``_bounded_input`` also enforces as a hard
-backstop, so the packer and the backstop share one number. ``max_input_chars <= 0``
-disables the cap (no fitting constraint).
+The budget is a single word count (``max_input_words``) — a model-agnostic proxy
+for tokens that the summarizer derives from the operator's configured token
+budget. Every fitting decision counts whitespace-delimited words, and
+``_bounded_input`` enforces the same word budget as a hard backstop.
+``max_input_words <= 0`` disables the cap (no fitting constraint).
 """
 
 from __future__ import annotations
@@ -122,19 +123,24 @@ class SummarizationPacker:
         fetch_graph: GraphFetcher,
         description_cache: Dict[str, str],
         max_depth: int,
-        max_input_chars: int,
+        max_input_words: int,
     ) -> None:
         self._fetch_graph = fetch_graph
         self._description_cache = description_cache
         self._max_depth = max(0, int(max_depth))
-        # Character budget for the call-graph text of one call — the same
-        # max_input_chars ceiling that _bounded_input backstops. <= 0 disables
-        # the cap (unlimited).
-        self._limited = int(max_input_chars) > 0
-        self._budget = max(1, int(max_input_chars))
+        # Word budget for one call's data block. Words are a model-agnostic proxy
+        # for tokens: the summarizer derives this from a configured token budget
+        # (see TopDownSummarizer). <= 0 disables the cap (unlimited).
+        self._limited = int(max_input_words) > 0
+        self._budget = max(1, int(max_input_words))
+
+    @staticmethod
+    def _words(text: str) -> int:
+        """Whitespace-delimited word count — the budget's unit of measure."""
+        return len(text.split())
 
     def _fits(self, text: str) -> bool:
-        return (not self._limited) or len(text) <= self._budget
+        return (not self._limited) or self._words(text) <= self._budget
 
     @staticmethod
     def _wrap(sections: List[str]) -> str:
@@ -143,16 +149,17 @@ class SummarizationPacker:
 
     @staticmethod
     def _section_cost(section_text: str, *, first: bool) -> int:
-        """Chars a section adds to a call's wrapped length.
+        """Words a section adds to a call's wrapped word count.
 
-        The first section pays for both array brackets; each later one pays for
-        the separator that precedes it. Summing these over a call's sections
-        yields exactly ``len(_wrap(sections))``, so budgeting counts the real
-        wrapper cost rather than an approximation.
+        The first section also pays for the array brackets; each later one pays
+        for the separator before it. Concatenation can only MERGE words across a
+        boundary (never split them), so summing these per-section counts is an
+        upper bound on ``_words(_wrap(sections))`` — i.e. it may slightly
+        over-count, never under-count, so the budget is never exceeded.
         """
         if first:
-            return len(_ARRAY_OPEN) + len(_ARRAY_CLOSE) + len(section_text)
-        return len(_SECTION_SEP) + len(section_text)
+            return SummarizationPacker._words(_ARRAY_OPEN + _ARRAY_CLOSE) + SummarizationPacker._words(section_text)
+        return SummarizationPacker._words(_SECTION_SEP) + SummarizationPacker._words(section_text)
 
     # ── public API ────────────────────────────────────────────────────────
 
@@ -198,7 +205,7 @@ class SummarizationPacker:
         cur_sections: List[str] = []
         cur_source_ids: List[str] = []
         cur_seen: set[str] = set()
-        cur_len = 0  # length of _wrap(cur_sections), kept exact as sections are added
+        cur_len = 0  # word count of _wrap(cur_sections) (conservative upper bound)
 
         def flush() -> None:
             nonlocal cur_sections, cur_source_ids, cur_seen, cur_len

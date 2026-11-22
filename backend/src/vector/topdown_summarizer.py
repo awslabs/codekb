@@ -117,6 +117,19 @@ _DESCRIPTION_PROMPT = (
     "Start your response with { and end with }"
 )
 
+# Token budget → word budget conversion. The operator configures a token budget;
+# we pack in words. A programming-language word costs roughly two tokens, and a
+# safety margin keeps us clear of the ceiling even when that estimate is light —
+# so a 1000-token budget yields floor(1000 / 2 * 0.9) = 450 words.
+_TOKENS_PER_WORD = 2
+_TOKEN_SAFETY_MARGIN = 0.10
+
+# Words the fixed scaffolding (instruction + security rules + markers) adds to
+# every prompt, measured once with an empty data block. Subtracted from the word
+# budget so the DATA BLOCK the packer builds, plus this overhead, stays within
+# the operator's token limit.
+_INSTRUCTION_OVERHEAD_WORDS = len(build_prompt(_DESCRIPTION_PROMPT, "").split())
+
 
 class TopDownSummarizer:
     """Executes top-down summarization algorithm using LLM.
@@ -163,7 +176,15 @@ class TopDownSummarizer:
             raise ValueError("No model configured for summarization (CODEKB_BEDROCK_MODEL_ID)")
         self._bedrock_region = require_config("llm.providers.bedrock.region")
         self._bedrock_read_timeout = int(require_config("llm.providers.bedrock.read_timeout"))
-        self._max_input_chars = int(require_config("summarization.max_input_chars"))
+        # Input budget. The operator configures a TOKEN budget (they read their
+        # model's context window and set it); we size packing in WORDS, a
+        # model-agnostic proxy. _packer_word_budget is the per-call data-block
+        # budget: the token budget converted to words, minus the fixed prompt
+        # overhead, so the WHOLE prompt stays under the operator's token limit.
+        # 0 (or non-positive) disables the cap entirely.
+        self._packer_word_budget = self._word_budget_from_tokens(
+            int(require_config("summarization.input_token_budget"))
+        )
         self._call_graph_depth = int(require_config("analysis.call_graph_depth"))
         # Run-scoped cost/failure guardrails. token_budget is a plain ceiling
         # (0 disables); the breaker trips the run after repeated Bedrock failures.
@@ -206,12 +227,12 @@ class TopDownSummarizer:
         # description prompt and how large it gets. Both the individual
         # (entry-point) and batch paths drive it, so fresh indexing and delta
         # refresh share identical sizing behavior. It fits complete units under
-        # max_input_chars (the same ceiling _bounded_input backstops).
+        # the per-call word budget (the same budget _bounded_input backstops).
         self._packer = SummarizationPacker(
             fetch_graph=self._fetch_call_graph,
             description_cache=self._description_cache,
             max_depth=self._call_graph_depth,
-            max_input_chars=self._max_input_chars,
+            max_input_words=self._packer_word_budget,
         )
 
     def _fetch_call_graph(self, component_id: str, depth: int) -> Dict[str, Any] | None:
@@ -290,20 +311,53 @@ class TopDownSummarizer:
                 )
         return self._bedrock_client
 
+    def _word_budget_from_tokens(self, token_budget: int) -> int:
+        """Per-call data-block WORD budget derived from a TOKEN budget.
+
+        Converts tokens → words (``_TOKENS_PER_WORD`` with ``_TOKEN_SAFETY_MARGIN``
+        headroom), then subtracts the fixed prompt overhead so the data block plus
+        that overhead stays under the operator's token limit. Returns 0 (unlimited)
+        when the token budget is non-positive. A budget smaller than the fixed
+        overhead is a misconfiguration — we clamp to a minimal 1-word budget (the
+        packer then floors every function) and warn.
+        """
+        if token_budget <= 0:
+            return 0
+        total_words = int(token_budget / _TOKENS_PER_WORD * (1 - _TOKEN_SAFETY_MARGIN))
+        budget = total_words - _INSTRUCTION_OVERHEAD_WORDS
+        if budget <= 0:
+            logger.warning(
+                f"summarization.input_token_budget ({token_budget}) is too small: it "
+                f"leaves no room after the fixed prompt overhead (~{_INSTRUCTION_OVERHEAD_WORDS} "
+                f"words / ~{_INSTRUCTION_OVERHEAD_WORDS * _TOKENS_PER_WORD} tokens). "
+                f"Every function will be floored (truncated). Raise the budget."
+            )
+            return 1
+        return budget
+
     def _bounded_input(self, input_text: str) -> str:
         """Cap untrusted LLM input length (cost/DoS guard).
 
-        Truncates oversized input with a warning rather than failing, so a
-        pathologically large call graph cannot drive unbounded token cost.
-        A non-positive cap disables the check.
+        Enforces the same per-call word budget the packer sizes against, as a hard
+        backstop: truncates oversized input (at a word boundary, preserving the
+        text up to it) with a warning rather than failing, so a pathologically
+        large call graph cannot drive unbounded token cost. A non-positive budget
+        (unlimited) disables the check.
         """
-        if 0 < self._max_input_chars < len(input_text):
-            logger.warning(
-                f"LLM input truncated from {len(input_text):,} to "
-                f"{self._max_input_chars:,} chars (summarization.max_input_chars)"
-            )
-            return input_text[: self._max_input_chars]
-        return input_text
+        if self._packer_word_budget <= 0:
+            return input_text
+        words = input_text.split()
+        if len(words) <= self._packer_word_budget:
+            return input_text
+        import re
+
+        matches = list(re.finditer(r"\S+", input_text))
+        cut = matches[self._packer_word_budget - 1].end()
+        logger.warning(
+            f"LLM input truncated from {len(words):,} to {self._packer_word_budget:,} "
+            f"words (summarization.input_token_budget backstop)"
+        )
+        return input_text[:cut]
 
     def _call_bedrock(self, prompt: str, input_text: str) -> str:
         """Call Bedrock LLM with prompt and input."""
@@ -616,7 +670,7 @@ class TopDownSummarizer:
         if call.floored:
             causes = []
             if call.source_truncated:
-                causes.append("source body truncated to fit max_input_chars")
+                causes.append("source body truncated to fit the input token budget")
             if call.tree_truncated:
                 causes.append("call tree dropped (callees not shown as context)")
             detail = "; ".join(causes) or "reduced context"
@@ -638,7 +692,7 @@ class TopDownSummarizer:
         """Describe target_ids, re-requesting any the model omits, bounded.
 
         The model is asked to describe every function, but it can return fewer
-        than requested: input truncation (max_input_chars) drops the tail of a
+        than requested: input truncation (input token budget) drops the tail of a
         large call, the JSON output can be cut at max_tokens, or the model omits
         or misnames some IDs. After each call this reconciles the returned keys
         against target_ids: any target not yet in the indexed cache is

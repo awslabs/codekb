@@ -304,12 +304,14 @@ summarization:
   # functions and shrink as indexed callees become CACHED DESCRIPTION.
   # 1 disables re-requesting.
   batch_reconcile_max_rounds: 3
-  # Input packing. The summarizer fits each description call into COMPLETE units
-  # (whole functions / depth levels / batch members) under max_input_chars,
-  # instead of cutting text at a character boundary and losing the tail.
-  # max_input_chars is the single input ceiling (also enforced as a hard
-  # backstop by _bounded_input); 0 disables the cap.
-  max_input_chars: 50000
+  # Input packing budget, in TOKENS. The summarizer fits each description call
+  # into COMPLETE units (whole functions / depth levels / batch members) under
+  # this budget, instead of cutting text and losing the tail. Set it from your
+  # model's context window (read the model docs). Packing is sized in words — a
+  # model-agnostic proxy — using ~2 tokens/word with a 10% safety margin, and the
+  # fixed prompt overhead is subtracted, so the whole prompt stays under this
+  # token limit. 0 disables the cap. Override: CODEKB_SUMMARIZATION_INPUT_TOKEN_BUDGET.
+  input_token_budget: 200000
   # Abort a summarization run once cumulative tokens (input+output across the
   # run) reach this ceiling — a cost guardrail. 0 disables.
   token_budget: 0

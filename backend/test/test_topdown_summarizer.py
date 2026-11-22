@@ -193,34 +193,34 @@ class TestTopDownSummarizerInputCap:
 
     def test_bounded_input_truncates_oversized(self):
         s = self._summarizer()
-        s._max_input_chars = 100
-        out = s._bounded_input("x" * 500)
-        assert len(out) == 100
+        s._packer_word_budget = 5
+        out = s._bounded_input("x " * 500)   # 500 words -> truncated to 5
+        assert len(out.split()) == 5
 
     def test_bounded_input_passes_through_within_cap(self):
         s = self._summarizer()
-        s._max_input_chars = 1000
-        text = "y" * 500
+        s._packer_word_budget = 1000
+        text = "y " * 500
         assert s._bounded_input(text) == text
 
-    def test_zero_cap_disables_truncation(self):
+    def test_zero_budget_disables_truncation(self):
         s = self._summarizer()
-        s._max_input_chars = 0
-        text = "z" * 10000
+        s._packer_word_budget = 0
+        text = "z " * 10000
         assert s._bounded_input(text) == text
 
     def test_call_bedrock_applies_cap(self):
         s = self._summarizer()
-        s._max_input_chars = 50
+        s._packer_word_budget = 5
         client = CapturingBedrockClient(anthropic_body("ok"))
         s._bedrock_client = client
 
-        s._call_bedrock("prompt", "q" * 500)
+        s._call_bedrock("prompt", "q " * 500)
 
         content = client.sent_message_content()
-        # Input truncated to 50 chars; the run of 51 would mean no truncation.
-        assert "q" * 50 in content
-        assert "q" * 51 not in content
+        # Input truncated to 5 words; a 6th word would mean no truncation.
+        assert "q q q q q" in content
+        assert "q q q q q q" not in content
 
 
 class TestTopDownSummarizerGuardrails:
