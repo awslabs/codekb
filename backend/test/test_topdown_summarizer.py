@@ -1,6 +1,9 @@
+import logging
+
 import pytest
 
 from src.vector.topdown_summarizer import TopDownSummarizer
+from src.vector.summarization_packer import PackedCall
 from test.bedrock_fakes import (
     CapturingBedrockClient,
     FakeBedrockClient,
@@ -14,6 +17,13 @@ class FakeRelevanceService:
 
     def get_business_relevance_tier(self, space_id: str, component_id: str) -> str | None:
         return self.tiers.get(component_id)
+
+    def get_call_graph_with_source_diagnosed(self, space_id, component_id, depth):
+        """Mirror the real service: delegate to get_call_graph_with_source and
+        report a reason when it yields nothing, so the summarizer's diagnosed
+        fetch path works against every fake (patched or subclassed)."""
+        graph = self.get_call_graph_with_source(space_id, component_id, depth)
+        return graph, (None if graph is not None else "component id not found in the catalog")
 
 
 class TestTopDownSummarizerRelevanceFiltering:
@@ -147,72 +157,30 @@ class TestTopDownSummarizerResponseParsing:
             s._call_bedrock("p", "i")
 
 
-class TestReplaceSourceWithDescriptions:
-    """A cached function must be fully masked, even when its source has blank lines."""
+class TestFlooredCallIsRecorded:
+    """A floored (truncated) call must surface reduced fidelity, not pass silently."""
 
-    def _render(self, graph: dict) -> str:
-        output: list[str] = []
-        TopDownSummarizer._format_call_graph(graph, output, seen=set())
-        return "\n".join(output)
+    def _summarizer(self):
+        return TopDownSummarizer("/tmp/project", "space", codekb_service=FakeRelevanceService({}))
 
-    def _summarizer(self, cache: dict[str, str]) -> TopDownSummarizer:
-        s = TopDownSummarizer("/tmp/project", "space", codekb_service=FakeRelevanceService({}))
-        s._description_cache.update(cache)
-        return s
+    def test_floored_call_logs_reduced_fidelity(self, caplog, monkeypatch):
+        s = self._summarizer()
+        monkeypatch.setattr(s, "_generate_and_index", lambda text, label: 0)
+        call = PackedCall(text="...", source_ids=["space::a.big"], floored=True)
+        with caplog.at_level(logging.WARNING):
+            s._run_packed_call(call, "space::a.big")
+        assert any(
+            "reduced fidelity" in r.message and "space::a.big" in r.message
+            for r in caplog.records
+        )
 
-    def test_cached_source_with_blank_line_is_fully_masked(self):
-        graph = {
-            "id": "space::a.caller",
-            "type": "function",
-            "source": "def caller():\n    x = 1\n\n    return callee(x)",
-            "calls": [
-                {
-                    "id": "space::a.callee",
-                    "type": "function",
-                    "source": "def callee(x):\n    y = x + 1\n\n    LEAK_MARKER = y\n    return y",
-                    "calls": [],
-                }
-            ],
-        }
-        s = self._summarizer({"space::a.callee": "Adds one."})
-
-        out = s._replace_source_with_descriptions(self._render(graph))
-
-        assert "CACHED DESCRIPTION:" in out
-        assert "Adds one." in out
-        assert "def callee" not in out
-        assert "LEAK_MARKER" not in out
-        # The uncached caller keeps its full source, blank line included.
-        assert "return callee(x)" in out
-
-    def test_children_of_cached_node_are_kept(self):
-        graph = {
-            "id": "space::a.root",
-            "type": "function",
-            "source": "def root():\n    mid()",
-            "calls": [
-                {
-                    "id": "space::a.mid",
-                    "type": "method",
-                    "source": "def mid(self):\n\n    MID_BODY = leaf()",
-                    "calls": [
-                        {
-                            "id": "space::a.leaf",
-                            "type": "function",
-                            "source": "def leaf():\n    return 1",
-                            "calls": [],
-                        }
-                    ],
-                }
-            ],
-        }
-        s = self._summarizer({"space::a.mid": "Calls leaf."})
-
-        out = s._replace_source_with_descriptions(self._render(graph))
-
-        assert "MID_BODY" not in out
-        assert "space::a.leaf (function)" in out
-        assert "def leaf():" in out
+    def test_non_floored_call_does_not_warn(self, caplog, monkeypatch):
+        s = self._summarizer()
+        monkeypatch.setattr(s, "_generate_and_index", lambda text, label: 0)
+        call = PackedCall(text="...", source_ids=["space::a.ok"], floored=False)
+        with caplog.at_level(logging.WARNING):
+            s._run_packed_call(call, "space::a.ok")
+        assert not any("reduced fidelity" in r.message for r in caplog.records)
 
 
 class TestTopDownSummarizerInputCap:

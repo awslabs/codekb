@@ -2106,9 +2106,9 @@ class FlowAnalyzer(IFlowAnalyzer):
         # each component is expanded at most once, making this O(V+E) instead of
         # exponential on dense graphs (a function reachable by many paths was
         # previously re-expanded on every path). Behavior-preserving: the
-        # consumers (_format_call_graph in flow_tools and topdown_summarizer)
-        # already de-duplicate by id with a `seen` set, so the flattened
-        # first-occurrence tree renders identically.
+        # consumers (_format_call_graph in flow_tools and SummarizationPacker in
+        # topdown_summarizer) already de-duplicate by id with a `seen` set, so the
+        # flattened first-occurrence tree renders identically.
         calls_with_lines = self._call_graph.get(component_id, [])
         for called_comp, _ in calls_with_lines:
             child_node = self._build_call_graph_with_source_recursive(
