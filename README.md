@@ -54,55 +54,68 @@ spaces can be grouped into a **hyperspace**.
 ## How it works
 
 CodeKB runs as one container that serves the web UI, the REST API and the MCP server.
-Everything it stores and every model it calls are in your own AWS account.
+Everything it stores and every model it calls are in your own AWS account. The
+numbers in the diagram match the steps below it.
 
 ```mermaid
 flowchart LR
-    dev([Developer<br/>browser])
-    mcp([MCP client<br/>e.g. Kiro · Claude Code])
+    dev([Developer])
+    agent([AI coding agent<br/>e.g. Kiro · Claude Code])
+    agentllm([Agent's LLM])
+    git([Git host<br/>GitHub · GitLab · Bitbucket])
 
     subgraph container["CodeKB container (your machine or your AWS account)"]
-        ui[Web UI<br/>React + Cloudscape]
-        api[FastAPI backend<br/>parsers · pipeline · Agent Hopper]
-        mcpsrv[MCP server<br/>/mcp/mcp]
+        ui[Web UI<br/>search · Agent Hopper]
+        mcpsrv[MCP server]
+        api[CodeKB backend<br/>② parse · call graph]
     end
 
     subgraph aws["Your AWS account"]
-        bedrock[Amazon Bedrock<br/>Claude · Titan embeddings · Guardrail]
-        s3[(Amazon S3<br/>KB JSON · source archives · git creds)]
-        vectors[(Amazon S3 Vectors<br/>embedding index)]
-        kms[AWS KMS<br/>git-credential key]
+        bedrock[Amazon Bedrock<br/>LLM · Guardrail · Titan embeddings]
+        vectors[(Amazon S3 Vectors<br/>description embeddings)]
+        s3[(Amazon S3<br/>knowledge base · source archive · Git tokens)]
+        kms[AWS KMS<br/>Git-token key]
         logs[Amazon CloudWatch Logs<br/>optional]
     end
 
-    git([Git host<br/>GitHub · GitLab · Bitbucket])
-
-    dev --> ui --> api
-    mcp --> mcpsrv --> api
-    api --> bedrock
-    api --> s3
-    api --> vectors
-    api --> kms
+    dev -- "① add a space<br/>④ search · chat" --> ui --> api
+    dev -- "④ brownfield task" --> agent
+    agent <--> agentllm
+    agent -- "④ MCP tools" --> mcpsrv --> api
+    api -- "① clone<br/>⑤ refresh" --> git
+    api -- "③ describe · embed" --> bedrock
+    api -- "③ index" --> vectors
+    api -- "① archive<br/>③ save" --> s3
+    api -- "① encrypt Git tokens" --> kms
     api -. otlp .-> logs
-    api -- clone --> git
 ```
 
-1. **Add a space.** Give CodeKB a Git URL or upload a zip. It clones or extracts the
-   source and archives a copy in S3. Saved Git tokens are encrypted with a KMS key.
-2. **Parse.** Tree-sitter parsers extract the functions, classes and modules in each
-   [supported language](docs/languages.md), plus the call graph between them.
-3. **Summarize and index.** An LLM on Amazon Bedrock describes what each function
-   does. It works from the deepest callees up, so each caller's description builds on
-   its callees' descriptions. A Bedrock Guardrail masks secrets and PII before the
-   source reaches the model. Titan embeds the descriptions into S3 Vectors, and the
-   knowledge base is saved to S3. The space is then Ready.
-4. **Explore.** Semantic search finds components by what they do. Call-graph tools
-   then show a match's source, callers and callees. Agent Hopper and MCP clients
-   such as Kiro use the same tools. Space Overviews are generated on demand, and a
-   hyperspace extends all of this across repositories.
-5. **Keep it current.** Refreshing a Git-sourced space re-parses only the changed
-   files and re-summarizes the changed functions and their callers. If a refresh
-   fails, the last indexed version stays searchable.
+### How CodeKB builds an understanding of a codebase
+
+1. **Add a space.** Point CodeKB at a Git URL or upload a zip. It clones or extracts
+   the source and archives a copy in S3. Saved Git tokens are encrypted with a KMS
+   key.
+2. **Recover deep context.** Tree-sitter parsers extract the symbols in each
+   [supported language](docs/languages.md), such as functions, methods, classes,
+   modules and variables. CodeKB then rebuilds the call graph between them. Knowing
+   which code calls which is what lets CodeKB understand a function in context.
+3. **Build the business-behavior index.** This is the core of CodeKB. On top of the
+   symbols and the call graph, an LLM on Amazon Bedrock describes each function in
+   business language, together with the code it calls. Each description therefore
+   says what the function accomplishes through its callees. A Bedrock Guardrail
+   masks secrets and PII first, and Titan embeds the descriptions into S3 Vectors.
+4. **Search by behavior, then follow the graph.** Because the index is built from
+   descriptions of what code does, semantic search finds components by intent
+   rather than keyword. From any match, the call-graph tools walk to its source,
+   callers and callees, so a single hit becomes a path through the system. Agent
+   Hopper and MCP clients such as Kiro use the same tools. Space Overviews are
+   generated on demand, and a hyperspace groups related repositories so search,
+   chat and overviews span all of them.
+5. **Keep it current without rebuilding it.** Refreshing a Git-sourced space
+   re-parses only the changed files. It then walks the call graph in reverse to find
+   the callers whose descriptions included the changed code, and re-summarizes those
+   callers and the changed functions. Everything else is reused. If a refresh fails,
+   the last indexed version stays searchable.
 
 ---
 
