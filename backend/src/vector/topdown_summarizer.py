@@ -620,7 +620,10 @@ class TopDownSummarizer:
                 # functions, so the output shrinks until it fits max_tokens.
                 cap = call.depth - 1
                 while outcome == _OUTCOME_TRUNCATED and cap >= 0 and not self._should_stop():
-                    for rc in self._packer.build_individual(comp_id, depth_cap=cap):
+                    retry_calls = self._packer.build_individual(comp_id, depth_cap=cap)
+                    if not retry_calls:
+                        break
+                    for rc in retry_calls:
                         count, outcome = self._run_packed_call(rc, f"{comp_id} depth<={cap}")
                         freshly += count
                         requested.extend(rc.source_ids)

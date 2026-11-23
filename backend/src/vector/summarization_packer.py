@@ -257,6 +257,10 @@ class SummarizationPacker:
                 section = self._render_tree(graph, depth_limit=self._max_depth, seen=trial_seen)
                 add_cost = self._section_cost(section.text, first=True)
 
+                if self._limited and add_cost > self._budget:
+                    calls.extend(self.build_individual(mid))
+                    continue
+
             cur_sections.append(section.text)
             cur_source_ids.extend(section.source_ids)
             cur_seen = trial_seen
