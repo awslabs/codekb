@@ -40,8 +40,9 @@ logger = get_logger(__name__)
 def _log_decision(
     gate: str, result: str, space: Optional[str] = None, reason: Optional[str] = None
 ) -> None:
-    """One INFO line per gate decision (allow/deny) — the rollout-watch signal."""
-    logger.info(
+    """Deny at INFO (audit signal); allow at DEBUG (fires per space on every list)."""
+    log = logger.info if result == "deny" else logger.debug
+    log(
         "authz.decision gate=%s space=%s result=%s reason=%s",
         gate,
         space or "-",
