@@ -125,7 +125,8 @@ async def agent_chat(body: AgentRequest, request: Request) -> dict:
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(f"Agent query prompt: {format_payload(body.message)}")
     try:
-        response_text, updated_history, token_usage = run_agent_query(
+        response_text, updated_history, token_usage = await asyncio.to_thread(
+            run_agent_query,
             space_ids,
             body.message,
             mode=body.mode,

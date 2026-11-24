@@ -22,7 +22,7 @@ ARG BASE_PLATFORM=linux/amd64
 # Not platform-pinned: the frontend build emits arch-neutral static files, so
 # letting it run on the build host's native arch avoids emulation. The VITE_*
 # values are inlined into the bundle at build time (public config, not secrets).
-FROM public.ecr.aws/docker/library/node:20 AS web
+FROM public.ecr.aws/docker/library/node:22 AS web
 ARG VITE_BASE=/
 ARG VITE_AUTH_ENABLED=false
 ARG VITE_COGNITO_DOMAIN=
