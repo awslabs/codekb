@@ -172,6 +172,13 @@ Embeddings V2.
   5 minutes.
 
 ---
+## Maintainers
+
+| Maintainer        | GitHub ID                                                 | 
+| ----------------- | --------------------------------------------------------- | 
+| Raj Jain          | [raj-jain-dev](https://github.com/raj-jain-dev)           | 
+| Raja SP           | [spraja08](https://github.com/spraja08)                   | 
+| Anurag V. Singh   | [AnuragVikramSingh](https://github.com/AnuragVikramSingh) | 
 
 ## Contributing
 
