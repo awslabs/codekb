@@ -50,14 +50,23 @@ class TypeScriptParser(BaseLanguageParser):
         source_lines = source_code.decode("utf-8").split("\n")
 
         def extract_from_node(node: Any, parent_component: Optional[str] = None) -> None:
-            if node.type in ["function_declaration", "method_definition", "arrow_function"]:
+            if node.type in [
+                "function_declaration",
+                "method_definition",
+                "arrow_function",
+                "abstract_method_signature",
+            ]:
                 component = self._extract_function_component(
                     node, source_lines, file_path, parent_component
                 )
                 if component:
                     components.append(component)
 
-            elif node.type in ["class_declaration", "interface_declaration"]:
+            elif node.type in [
+                "class_declaration",
+                "interface_declaration",
+                "abstract_class_declaration",
+            ]:
                 component = self._extract_class_component(
                     node, source_lines, file_path, parent_component
                 )
@@ -75,7 +84,11 @@ class TypeScriptParser(BaseLanguageParser):
                 if component:
                     components.append(component)
 
-            if node.type not in ["class_declaration", "interface_declaration"]:
+            if node.type not in [
+                "class_declaration",
+                "interface_declaration",
+                "abstract_class_declaration",
+            ]:
                 for child in node.children:
                     extract_from_node(child, parent_component)
 
@@ -114,8 +127,9 @@ class TypeScriptParser(BaseLanguageParser):
             function_name = "anonymous"
 
             # Handle different node types for function extraction
-            if node.type == "method_definition":
-                # For class methods, look for property_identifier or identifier
+            if node.type in ["method_definition", "abstract_method_signature"]:
+                # For class methods and abstract method signatures, the name is
+                # a property_identifier or identifier
                 for child in node.children:
                     if child.type in ["property_identifier", "identifier"]:
                         function_name = self._get_node_text(child, source_lines)

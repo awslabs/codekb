@@ -322,6 +322,31 @@ class TestTypeScriptIntegration:
         assert "parser_test_typescript._privateHelper" in processor_calls
         assert "parser_test_typescript.validateInput" in processor_calls
 
+    def test_typescript_abstract_class_components(self, typescript_lang):
+        file_path = FIXTURES_DIR / "parser_test_typescript_abstract.ts"
+        components, _ = parse_and_analyze(file_path, TypeScriptParser, typescript_lang)
+
+        by_id = {c.id: c for c in components}
+
+        # The abstract class and its subclass are class components.
+        assert "parser_test_typescript_abstract.Shape" in by_id
+        assert "parser_test_typescript_abstract.Circle" in by_id
+        assert (
+            by_id["parser_test_typescript_abstract.Shape"].type.value == "class"
+        )
+
+        # Abstract method signatures become bodyless methods of the class.
+        assert "parser_test_typescript_abstract.Shape.area" in by_id
+        assert "parser_test_typescript_abstract.Shape.scale" in by_id
+        area = by_id["parser_test_typescript_abstract.Shape.area"]
+        assert area.type.value == "method"
+        assert area.parent_component == "parser_test_typescript_abstract.Shape"
+
+        # Concrete methods keep their class parent.
+        assert "parser_test_typescript_abstract.Shape.describe" in by_id
+        assert "parser_test_typescript_abstract.Circle.area" in by_id
+        assert "parser_test_typescript_abstract.Circle.scale" in by_id
+
 
 class TestIntegrationRegression:
     """Regression tests that round-trip through the knowledge base + mock S3."""
