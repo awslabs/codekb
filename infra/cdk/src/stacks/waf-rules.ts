@@ -11,7 +11,9 @@ import * as wafv2 from "aws-cdk-lib/aws-wafv2";
  * SizeRestrictions limit, so the group would block legitimate MCP traffic. The
  * OAuth authorize request carries the MCP client's loopback redirect URI
  * (`http://127.0.0.1:<port>/callback`), which the managed Common rules flag and
- * block, breaking the sign-in flow. `notStatement(or(these paths))` means
+ * block, breaking the sign-in flow. The OAuth discovery metadata
+ * (`/.well-known/oauth-*`) is exempt too: some MCP clients fetch it without a
+ * User-Agent, which the Common rules block. `notStatement(or(these paths))` means
  * "apply the managed rules to everything except these".
  *
  * `exemptPrefix` is prepended to the exempt path. It's empty for the CloudFront
@@ -24,7 +26,11 @@ export function buildWafRules(
   exemptPrefix = "",
 ): wafv2.CfnWebACL.RuleProperty[] {
   const prefix = exemptPrefix.replace(/\/+$/, ""); // '' or '/prod'
-  const exemptPaths = [`${prefix}/mcp/`, `${prefix}/oauth2/`];
+  const exemptPaths = [
+    `${prefix}/mcp/`,
+    `${prefix}/oauth2/`,
+    `${prefix}/.well-known/oauth-`,
+  ];
 
   // Managed rule groups skip the exempt paths. Shared by both managed rules.
   const scopeDownToExempt: wafv2.CfnWebACL.StatementProperty = {

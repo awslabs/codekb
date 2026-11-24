@@ -3,6 +3,7 @@ model runs. An empty readable scope answers without calling the model (and never
 falls through to "all spaces"); an expired token fails the request.
 """
 
+import threading
 from unittest.mock import MagicMock, patch
 
 import src.api.auth as auth_mod
@@ -108,3 +109,50 @@ def test_agent_expired_token_fails_401():
     assert resp.status_code == 401
     assert resp.json()["error"] == "git_credentials_expired"
     run_mock.assert_not_called()
+
+
+def test_agent_chat_does_not_block_the_event_loop():
+    from fastapi import FastAPI
+    from starlette.testclient import TestClient
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_agent(*args, **kwargs):
+        started.set()
+        release.wait(10)
+        return ("done", [], {})
+
+    app = FastAPI()
+    app.include_router(agent.router, prefix="/api/agent")
+    app.add_exception_handler(AuthzError, authz_exception_handler)
+
+    @app.get("/ping")
+    async def ping():
+        return {"ok": True}
+
+    ps = _patches(MagicMock(side_effect=slow_agent), resolve=["s1"])
+    _run(ps)
+    results = {}
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            chat = threading.Thread(
+                target=lambda: results.update(
+                    chat=client.post("/api/agent/chat", json={"message": "hi"})
+                )
+            )
+            chat.start()
+            assert started.wait(5), "agent call never started"
+            pinger = threading.Thread(target=lambda: results.update(ping=client.get("/ping")))
+            pinger.start()
+            pinger.join(2)
+            ping_answered_during_agent_run = "ping" in results
+            release.set()
+            chat.join(10)
+            pinger.join(10)
+    finally:
+        release.set()
+        _stop(ps)
+    assert ping_answered_during_agent_run, "a running agent call blocked the event loop"
+    assert results["ping"].status_code == 200
+    assert results["chat"].status_code == 200

@@ -578,6 +578,7 @@ export class ServiceStack extends cdk.Stack {
       vpc,
       internetFacing: false,
       loadBalancerName: `${props.resourcePrefix}-alb`,
+      idleTimeout: cdk.Duration.seconds(150),
     });
 
     // Fargate service

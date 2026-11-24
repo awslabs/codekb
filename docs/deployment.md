@@ -22,7 +22,7 @@ for Bedrock cost drivers.
 
 ## Prerequisites
 
-- Node.js and npm, the AWS CLI, and a running Docker (or finch, with
+- Node.js 22 or later and npm, the AWS CLI, and a running Docker (or finch, with
   `export CDK_DOCKER=finch`). The image is built on your machine.
 - Bedrock access in `CODEKB_BEDROCK_REGION` (default `us-east-1`) to the model you
   deploy with (default Claude Opus 4.6) and to Titan Text Embeddings V2.
@@ -37,6 +37,20 @@ for Bedrock cost drivers.
   npx cdk bootstrap aws://<account-id>/us-east-1
   # Only when Bedrock uses a third region:
   npx cdk bootstrap aws://<account-id>/<bedrock-region>
+  ```
+
+- VPC Block Public Access off in the deploy region, or an exclusion for the
+  service's subnets. Check with
+  `aws ec2 describe-vpc-block-public-access-options --region <region>`. When it
+  blocks ingress, the `…-edge` stack fails with "You can't update an endpoint
+  group that has endpoints in a subnet with Block Public Access enabled",
+  because the CloudFront VPC origin can't attach to the internal load balancer.
+  After that first run, add an `allow-bidirectional` exclusion for each private
+  subnet of the `…-service` stack's VPC, then run the script again.
+
+  ```bash
+  aws ec2 create-vpc-block-public-access-exclusion --region <region> \
+    --subnet-id <private-subnet-id> --internet-gateway-exclusion-mode allow-bidirectional
   ```
 
 ## Deploy
@@ -219,6 +233,11 @@ trusts whatever identity the caller sends.
 - Health check: `GET /api/health` returns 200.
 - Agent Hopper streams answers as server-sent events. Don't buffer them, and allow
   responses that last several minutes.
+- A non-streamed `POST /api/agent/chat` holds the connection open with no data
+  until the agent finishes. The CDK sets the CloudFront origin response timeout
+  to 120 seconds, the most the default quota allows, and the load balancer idle
+  timeout to 150 seconds. A longer run returns 504, so use
+  `/api/agent/chat/stream` for long questions, as the Web UI does.
 - Rate-limit at the edge, as the WAF stack does.
 - Under a path prefix, set `CODEKB_ROOT_PATH=/codekb` and build with
   `VITE_BASE=/codekb/`, and include the prefix in the callback URLs.
@@ -246,6 +265,23 @@ the CDK sizes tasks at 4 vCPU, 16 GB and 50 GiB.
   Drain replicas before upgrades where you can.
 
 ## Tear down
+
+Run `cdk destroy` from `infra/cdk/` with the settings you deployed with.
+`deploy.sh` sets some of them itself, so pass them explicitly:
+
+```bash
+cd infra/cdk
+npm run build
+AWS_REGION=<region> CODEKB_PROJECT=<project> CODEKB_STAGE=<stage> \
+  CODEKB_ENABLE_AUTH=true CODEKB_CALLBACK_DOMAIN=<host> \
+  npx cdk destroy --all
+```
+
+With a reused pool, replace `CODEKB_ENABLE_AUTH=true` with
+`CODEKB_COGNITO_USER_POOL_ID` and `CODEKB_COGNITO_DOMAIN_URL`. Also set any
+`CODEKB_BEDROCK_REGION`, storage-reuse or OIDC variables you deployed with.
+Without the auth settings, `--all` skips the `…-auth` stack, so confirm that
+`npx cdk list` shows every stack first.
 
 `cdk destroy` leaves retained resources in place: the knowledge-base and access-log
 buckets, vector resources, Git-credentials KMS key, OIDC secret (when used), and
