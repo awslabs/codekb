@@ -35,7 +35,7 @@ feature development, debugging, refactoring, code reviews, and modernization.
   application architecture, technology stack, and deployment architecture.
 - **Semantic code search:** find components by intent ("where are payments
   authorized?"), not just by keyword.
-- **Agent Hopper:** a repository-aware chat agent that answers questions grounded in
+- **Agent Hopper:** a chat agent that answers questions grounded in
   the analyzed code, with an Impact Analysis mode for reasoning about what a change
   would break.
 - **Hyperspaces:** group related repositories so search, chat, and overviews can span
@@ -157,8 +157,8 @@ Embeddings V2.
   by default.
 - **Size limits.** An analysis parses at most 10,000 eligible source files; any
   beyond that are skipped with only a log warning. Files over 10 MB are skipped.
-  A Git clone must finish within 5 minutes. A zip upload can be up to 500 MB and
-  5 GB once extracted.
+  A Git clone (shallow, latest commit only) must finish within 5 minutes. A zip
+  upload can be up to 500 MB and 5 GB once extracted.
 - **Background jobs are capped and run inside the server process.** By default,
   each process runs at most 32 analyses, refreshes and overview generations at once
   (`CODEKB_PIPELINE_POOL_SIZE`); further job requests get HTTP 429 with
