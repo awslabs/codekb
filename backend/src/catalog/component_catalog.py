@@ -130,7 +130,7 @@ class ComponentCatalog(IComponentRepository):
 
     def search_components(self, pattern: str) -> List[Component]:
         """
-        Search components by name pattern.
+        Search components by name pattern, matched against display name or id.
 
         Args:
             pattern: Search pattern (supports '*' wildcards)
@@ -149,10 +149,13 @@ class ComponentCatalog(IComponentRepository):
         # Split once, then match every component against the segment list.
         segments = self._pattern_segments(pattern)
 
+        # A short display name drops the `space::` prefix MCP patterns carry, so
+        # fall back to the qualified id.
         matching_components: List[Component] = [
             component
             for component in self._components.values()
             if self._matches_segments(segments, component.name)
+            or (component.name != component.id and self._matches_segments(segments, component.id))
         ]
 
         # Rank results by relevance (exact matches first, then by name length)

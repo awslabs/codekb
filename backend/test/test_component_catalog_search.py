@@ -169,6 +169,29 @@ class TestSemanticsUnchanged:
         assert catalog.search_components("Order*") == []
 
 
+class TestDisplayNameDiffersFromId:
+    """A space-qualified pattern must still find a component with a short display name."""
+
+    COMPONENT_ID = "space-a::module.Widget_a1b2"
+
+    @pytest.fixture
+    def catalog(self) -> ComponentCatalog:
+        component = _make_component(self.COMPONENT_ID)
+        component._name = "Widget"
+        catalog = ComponentCatalog()
+        catalog.add_component(component)
+        return catalog
+
+    def test_qualified_pattern_matches_id(self, catalog):
+        assert [c.id for c in catalog.search_components("space-a::*Widget*")] == [self.COMPONENT_ID]
+
+    def test_bare_pattern_matches_display_name(self, catalog):
+        assert [c.id for c in catalog.search_components("Widget")] == [self.COMPONENT_ID]
+
+    def test_other_space_prefix_does_not_match(self, catalog):
+        assert catalog.search_components("space-b::*Widget*") == []
+
+
 class TestRedosVectorsAreBounded:
     """Each of these hung for tens of seconds under the regex translation."""
 

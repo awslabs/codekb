@@ -133,10 +133,17 @@ async def get_stats(space_id: str, raw_output: bool = False, ctx: Context = None
 # ── formatting helpers ──────────────────────────────────────────────────
 
 
+def _name_with_id(comp: dict, default: str) -> str:
+    """Display name, plus the id when they differ: follow-up tools only accept the id."""
+    name = comp.get("name", default)
+    comp_id = comp.get("id")
+    return f"{name} [id: {comp_id}]" if comp_id and comp_id != name else name
+
+
 def _format_component(comp: dict) -> str:
     """Format a single component dict for human-readable output."""
     lines = [
-        f"Component: {comp.get('name', 'unknown')}",
+        f"Component: {_name_with_id(comp, 'unknown')}",
         f"   Type: {comp.get('type', 'unknown')}",
         f"   File: {comp.get('file_path', 'unknown')}",
         f"   Lines: {comp.get('line_number', '?')}-{comp.get('end_line_number', '?')}",
@@ -152,7 +159,7 @@ def _format_component_list(components: list[dict]) -> str:
     lines = [f"Components ({len(components)}):"]
     for i, comp in enumerate(components[:20]):
         lines.append(
-            f"   {i + 1:2d}. {comp.get('name', '?')} ({comp.get('type', '?')}) - {comp.get('file_path', '?')}"
+            f"   {i + 1:2d}. {_name_with_id(comp, '?')} ({comp.get('type', '?')}) - {comp.get('file_path', '?')}"
         )
     if len(components) > 20:
         lines.append(f"   ... and {len(components) - 20} more")
@@ -162,7 +169,7 @@ def _format_component_list(components: list[dict]) -> str:
 def _format_component_detail(comp: dict) -> str:
     """Format detailed component info for human-readable output."""
     lines = [
-        f"Component: {comp.get('name', 'unknown')}",
+        f"Component: {_name_with_id(comp, 'unknown')}",
         f"   Type: {comp.get('type', 'unknown')}",
         f"   File: {comp.get('file_path', 'unknown')}",
         f"   Lines: {comp.get('line_number', '?')}-{comp.get('end_line_number', '?')}",
