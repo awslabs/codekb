@@ -1,10 +1,10 @@
-"""Rust functions in `impl` blocks and in inline modules.
+"""A Rust method's parent id must name a component that exists.
 
-The parser typed every function with a parent as a method, so a function in an
-inline `mod` was a method. It built the parent of a method in an `impl` block from
-the type text, so `&'a mut Value` gave the parent `'a mut Value`, and an `impl` for
-a slice took the trait as its type. A function in an inline `mod` hung under a
-module that was not a component.
+The parent of a method in an `impl` block is the implemented type. The parser
+used to build it from the type text, so `&'a mut Value` gave the parent
+`'a mut Value`, an `impl` for a slice took the trait as its type, and an `impl`
+for a type defined in another file pointed at an id that no component has.
+Functions in an inline `mod` hung under a module that was not a component either.
 """
 
 import re
@@ -174,6 +174,7 @@ class TestTheImplTargetIsTheTypeName:
         components, _ = analyze({"value.rs": VALUE_RS, "parse.rs": PARSE_RS}, IdScheme.V1_STEM)
 
         assert "parse.'a mut Value.fmt" in components
+        assert not [c for c in components.values() if c.type is ComponentType.IMPLEMENTATION]
 
 
 class TestAnInlineModuleIsAComponent:
@@ -191,3 +192,18 @@ class TestAnInlineModuleIsAComponent:
 
         assert components["same.unbounded"].type is ComponentType.FUNCTION
         assert "same.unbounded.inner" in call_graph["same.unbounded"]
+
+
+class TestAnImplForATypeDefinedElsewhereIsAComponent:
+    def test_the_impl_block_is_the_component_the_methods_hang_under(self, components):
+        impl_block = components["parse.Value"]
+
+        assert impl_block.type is ComponentType.IMPLEMENTATION
+        assert impl_block.attributes.signature.startswith("impl Value")
+        assert short(components["parse.Value.parse"].parent_component) == "parse.Value"
+
+    def test_every_method_has_a_parent_that_exists(self, components):
+        methods = [c for c in components.values() if c.type is ComponentType.METHOD]
+
+        assert methods
+        assert all(short(method.parent_component) in components for method in methods)

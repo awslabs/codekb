@@ -47,5 +47,9 @@ Classes, mixins, extensions, extension types and typedefs are all stored as
 
 ## Rust
 
+- An `impl` block for a type that the file does not define (a type from another
+  file or crate, a type parameter, a primitive type) is stored as an
+  `implementation` component named after that type, and its methods hang under
+  it. A type with impl blocks in several files has one such component per file.
 - An inline `mod name { ... }` is a `module` component. A function in it is a
   function, not a method, and a call to it by path (`name::f()`) gets an edge.

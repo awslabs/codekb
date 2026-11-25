@@ -119,14 +119,14 @@ class RustParser(BaseLanguageParser):
         """Extract components from Rust syntax tree."""
         components: List[Component] = []
         source_lines = source_code.decode("utf-8").split("\n")
-        # V2 only: an impl target is resolved in the tree, and an inline module is a
-        # component. Legacy V1 spaces keep their ids and components, so a refresh
-        # does not change them.
+        # V2 only: an impl target is resolved in the tree, and an inline module or an
+        # impl block for a type this file does not declare is a component. Legacy V1
+        # spaces keep their ids and components, so a refresh does not change them.
         v2 = self._scheme == IdScheme.V2_PATH
         declared = self._declared_ids(root_node, source_lines, file_path, None, set())
         scope_parent: Dict[str, Optional[str]] = {}  # inline module id -> enclosing scope
-        # (node, id, type, enclosing scope) of the inline modules, added after the walk
-        # when no other component has the id, so a function never loses its id.
+        # (node, id, type, enclosing scope) of the modules and impl blocks, added after
+        # the walk when no other component has the id, so a function never loses its id.
         pending: List[Tuple[Any, str, ComponentType, Optional[str]]] = []
 
         def item_component(
@@ -205,6 +205,10 @@ class RustParser(BaseLanguageParser):
             # impl block: methods inside belong to the implementing type.
             if node.type == "impl_item":
                 impl_parent = impl_parent_id(node, parent_component)
+                if impl_parent:
+                    pending.append(
+                        (node, impl_parent, ComponentType.IMPLEMENTATION, parent_component)
+                    )
                 for child in node.children:
                     if child.type == "declaration_list":
                         for grandchild in child.children:

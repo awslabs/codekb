@@ -75,6 +75,8 @@ logger = get_logger(__name__)
 
 # Languages where an unqualified call inside a class can name another member of it.
 _BARE_CALLS_REACH_MEMBERS = frozenset({"java", "csharp", "cpp", "kotlin", "dart", "c"})
+# Rust components that a call name never means.
+_RUST_NOT_CALLED = frozenset({ComponentType.MODULE, ComponentType.IMPLEMENTATION})
 
 
 class FlowAnalyzer(IFlowAnalyzer):
@@ -411,10 +413,11 @@ class FlowAnalyzer(IFlowAnalyzer):
                 )
 
             # Preserve the existing first-component-wins behavior for an
-            # ambiguous unqualified simple name. A Rust module is not called, and
-            # can have the name of a function (`mod unbounded` and `fn unbounded`).
+            # ambiguous unqualified simple name. A Rust module or impl block is
+            # not called, and can have the name of a function (`mod unbounded`
+            # and `fn unbounded`; `impl Index for I` and `fn I()`).
             if simple_name not in component_lookup and not (
-                comp.language == "rust" and comp.type == ComponentType.MODULE
+                comp.language == "rust" and comp.type in _RUST_NOT_CALLED
             ):
                 component_lookup[simple_name] = comp.id
 
