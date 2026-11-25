@@ -75,6 +75,11 @@ logger = get_logger(__name__)
 
 # Languages where an unqualified call inside a class can name another member of it.
 _BARE_CALLS_REACH_MEMBERS = frozenset({"java", "csharp", "cpp", "kotlin", "dart", "c"})
+# Component types whose body is a scope: a component nested in one is local to it.
+_LOCAL_SCOPE_TYPES = (ComponentType.FUNCTION, ComponentType.METHOD, ComponentType.CONSTRUCTOR)
+# Languages where a function defined inside a method is still visible outside it
+# (a Ruby `def` inside a method defines a method of the enclosing class).
+_NESTED_DEFINITIONS_ARE_GLOBAL = frozenset({"ruby"})
 
 
 class FlowAnalyzer(IFlowAnalyzer):
@@ -112,6 +117,8 @@ class FlowAnalyzer(IFlowAnalyzer):
             defaultdict(list)
         )
         self._depth_cache: Optional[Dict[str, Any]] = None  # Cache for call graph depths
+        self._scope_type_by_id: Dict[str, ComponentType] = {}
+        self._span_by_id: Dict[str, Tuple[Path, int, int]] = {}  # file, first and last line
 
     def build_call_graph(
         self, components: List[Component], tree_cache: Optional[Dict[str, Any]] = None
@@ -399,6 +406,8 @@ class FlowAnalyzer(IFlowAnalyzer):
         self._typed_method_lookup = {}
         self._file_and_parent_by_id = {}
         self._ids_by_file_and_name = defaultdict(list)
+        self._scope_type_by_id = {}
+        self._span_by_id = {}
 
         # Create the base lookup and collect the secondary indexes in one pass.
         for comp in components:
@@ -410,15 +419,12 @@ class FlowAnalyzer(IFlowAnalyzer):
                 comp.parent_component,
                 comp.language,
             )
+            self._scope_type_by_id[comp.id] = comp.type
+            self._span_by_id[comp.id] = (comp.file_path, comp.line_number, comp.end_line_number)
             if comp.type in (ComponentType.FUNCTION, ComponentType.METHOD):
                 self._ids_by_file_and_name[(comp.file_path, simple_name)].append(
                     (comp.id, comp.parent_component)
                 )
-
-            # Preserve the existing first-component-wins behavior for an
-            # ambiguous unqualified simple name.
-            if simple_name not in component_lookup:
-                component_lookup[simple_name] = comp.id
 
             if (
                 comp.type == ComponentType.CONSTRUCTOR
@@ -570,14 +576,56 @@ class FlowAnalyzer(IFlowAnalyzer):
     def _build_scoped_lookup(
         self, component_lookup: Dict[str, str], components: List[Component]
     ) -> None:
-        """Build nested-function aliases without parent-by-child cross scans."""
+        """Build nested-function aliases without parent-by-child cross scans.
+
+        A component nested in a function (a local variable, a closure) is visible
+        only in that function and in the functions nested in it, so it gets only
+        the key ``<parent id>::<name>``. Every other component also keeps the
+        first-component-wins key under its bare simple name.
+        """
         component_ids = {comp.id for comp in components}
         for nested in components:
             parent_id = nested.parent_component
-            if not parent_id or parent_id not in component_ids:
-                continue
             simple_name = nested.get_simple_name()
-            component_lookup[f"{parent_id}::{simple_name}"] = nested.id
+            if parent_id and parent_id in component_ids:
+                component_lookup[f"{parent_id}::{simple_name}"] = nested.id
+
+            is_local = self._is_local_scope(parent_id, nested.id) and not (
+                nested.language in _NESTED_DEFINITIONS_ARE_GLOBAL
+                and nested.type in (ComponentType.FUNCTION, ComponentType.METHOD)
+            )
+            if simple_name not in component_lookup and not is_local:
+                component_lookup[simple_name] = nested.id
+
+    def _is_local_scope(self, scope_id: Optional[str], component_id: str) -> bool:
+        """True when ``scope_id`` is a function-like component whose lines hold the component.
+
+        The line check guards against a parent id that another component took over
+        (a parser can give a function the id of the class it is named after).
+        """
+        if not scope_id or self._scope_type_by_id.get(scope_id) not in _LOCAL_SCOPE_TYPES:
+            return False
+
+        scope = self._span_by_id.get(scope_id)
+        inner = self._span_by_id.get(component_id)
+        if scope is None or inner is None:
+            return False
+
+        same_file = scope[0] == inner[0]
+        return same_file and scope[1] <= inner[1] and inner[2] <= scope[2]
+
+    def _enclosing_function_scopes(self, caller_component: str) -> List[str]:
+        """Ids of the functions that enclose a caller, nearest first.
+
+        Stops at a class body and on a cycle in the parent links.
+        """
+        scopes: List[str] = []
+        current = caller_component
+        parent = self._file_and_parent_by_id.get(current, (None, None, None))[1]
+        while parent and parent not in scopes and self._is_local_scope(parent, current):
+            scopes.append(parent)
+            current, parent = parent, self._file_and_parent_by_id[parent][1]
+        return scopes
 
     def _resolve_call_with_scope(
         self, call_name: str, caller_component: str, component_lookup: Dict[str, str]
@@ -587,6 +635,12 @@ class FlowAnalyzer(IFlowAnalyzer):
         scoped_key = f"{caller_component}::{call_name}"
         if scoped_key in component_lookup:
             return component_lookup[scoped_key]
+
+        # A function nested in an enclosing function is visible here too.
+        for scope_id in self._enclosing_function_scopes(caller_component):
+            nested_key = f"{scope_id}::{call_name}"
+            if nested_key in component_lookup:
+                return component_lookup[nested_key]
 
         # Fall back to regular resolution
         target = component_lookup.get(call_name)
