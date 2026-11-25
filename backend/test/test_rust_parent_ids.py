@@ -1,7 +1,9 @@
 """Rust functions in `impl` blocks and in inline modules.
 
 The parser typed every function with a parent as a method, so a function in an
-inline `mod` was a method.
+inline `mod` was a method. It built the parent of a method in an `impl` block from
+the type text, so `&'a mut Value` gave the parent `'a mut Value`, and an `impl` for
+a slice took the trait as its type.
 """
 
 import re
@@ -47,10 +49,16 @@ impl<'a> std::fmt::Display for &'a mut Value {
 impl<'a, T: Clone> Index for &'a T {
     fn index(&self) {}
 }
+impl<'a> Index for &'a (dyn Index + 'a) {
+    fn index(&self) {}
+}
 impl Summary for [u8] {
     fn size(&self) -> usize {
         0
     }
+}
+impl Summary for tagged!() {
+    fn tag(&self) {}
 }
 pub struct Thing;
 mod inner {
@@ -131,3 +139,37 @@ class TestAFunctionIsAMethodOnlyInATypeBody:
     ):
         assert components["parse.tests.helper"].type is ComponentType.FUNCTION
         assert "parse.tests.helper" in call_graph["parse.run"]
+
+
+class TestTheImplTargetIsTheTypeName:
+    @pytest.mark.parametrize(
+        ("method", "parent"),
+        [
+            ("parse.Value.fmt", "parse.Value"),
+            ("parse.T.index", "parse.T"),
+            ("parse.Index.index", "parse.Index"),
+            ("parse.slice.size", "parse.slice"),
+            ("parse.tagged.tag", "parse.tagged"),
+            ("parse.Thing.outer", "parse.Thing"),
+            ("parse.inner.Thing.own", "parse.inner.Thing"),
+            ("parse.inner.Thing.scoped", "parse.inner.Thing"),
+        ],
+        ids=[
+            "reference with lifetime and mut",
+            "type parameter",
+            "a parenthesized trait object is not a tuple",
+            "slice",
+            "a macro in type position gives its name",
+            "super:: names the type one scope out",
+            "a type in the same module comes first",
+            "a path names the type in that module",
+        ],
+    )
+    def test_the_parent_is_the_name_of_the_implemented_type(self, components, method, parent):
+        assert components[method].type is ComponentType.METHOD
+        assert short(components[method].parent_component) == parent
+
+    def test_a_v1_space_keeps_its_ids(self):
+        components, _ = analyze({"value.rs": VALUE_RS, "parse.rs": PARSE_RS}, IdScheme.V1_STEM)
+
+        assert "parse.'a mut Value.fmt" in components
