@@ -1316,24 +1316,39 @@ class RefreshOrchestrator:
             file_key = str(_repo_relative_path(comp.file_path))
             prior_components_by_file.setdefault(file_key, []).append(comp.id)
 
-        # Preserved: components from unchanged files
-        preserved_component_ids: frozenset[str] = frozenset(
-            comp_id
-            for file_path in unchanged_files
-            for comp_id in prior_components_by_file.get(file_path, [])
+        # Component IDs are not file-qualified: two files with the same module
+        # stem (e.g. two __init__.py or two server.py) yield the same ID. When
+        # one of them changes and the other does not, the ID would land in both
+        # preserved and evicted and RefreshPlan would fail with
+        # invariant_violation. Resolve it the way the merge already does: a
+        # fresh parse wins, otherwise the unchanged file keeps the ID.
+        freshly_parsed_ids: frozenset[str] = frozenset(c.id for c in self._parsed_components)
+
+        # Preserved: components from unchanged files, unless a fresh parse
+        # replaces the same ID.
+        preserved_component_ids: frozenset[str] = (
+            frozenset(
+                comp_id
+                for file_path in unchanged_files
+                for comp_id in prior_components_by_file.get(file_path, [])
+            )
+            - freshly_parsed_ids
         )
 
-        # Evicted: components from removed + modified files (their old versions are gone)
-        evicted_component_ids: frozenset[str] = frozenset(
-            comp_id
-            for file_path in (removed_files | modified_files)
-            for comp_id in prior_components_by_file.get(file_path, [])
+        # Evicted: components from removed + modified files (their old versions
+        # are gone), unless the same ID is still kept from an unchanged file.
+        evicted_component_ids: frozenset[str] = (
+            frozenset(
+                comp_id
+                for file_path in (removed_files | modified_files)
+                for comp_id in prior_components_by_file.get(file_path, [])
+            )
+            - preserved_component_ids
         )
 
         # Vectors to delete: evicted components that won't be replaced by fresh parses
         # For modified files, some component IDs may reappear in the fresh parse
         # (same function name in the same file). Those will be upserted, not deleted.
-        freshly_parsed_ids: frozenset[str] = frozenset(c.id for c in self._parsed_components)
         vectors_to_delete: frozenset[str] = frozenset(
             cid for cid in evicted_component_ids if cid not in freshly_parsed_ids
         )
