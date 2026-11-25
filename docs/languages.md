@@ -5,7 +5,7 @@ CodeKB parses supported languages into components:
 | Language | Additional notes |
 |---|---|
 | C | |
-| C++ | |
+| C++ | See [C++ notes](#c) |
 | C# | |
 | Dart | See [Dart notes](#dart) |
 | Go | |
@@ -53,3 +53,12 @@ Classes, mixins, extensions, extension types and typedefs are all stored as
   it. A type with impl blocks in several files has one such component per file.
 - An inline `mod name { ... }` is a `module` component. A function in it is a
   function, not a method, and a call to it by path (`name::f()`) gets an edge.
+
+## C++
+
+- A class head that tree-sitter does not read, such as a macro followed by an
+  attribute (`class GTEST_API_ [[nodiscard]] Name {`), is not indexed. A member
+  of that class defined outside it gets a parent that no component has.
+- A namespace opened by a macro (`FMT_BEGIN_NAMESPACE`) is not read. A class
+  declared in it and its members defined in another file stand at file scope,
+  so those members get a parent that no component has.

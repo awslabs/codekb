@@ -229,10 +229,23 @@ class CppParser(BaseLanguageParser):
         def make_id(parent: Optional[str], name: str) -> str:
             return self.make_id(file_path, name, parent)
 
-        def parent_from_qualifier(segments: List[str]) -> Optional[str]:
-            """Turn a qualifier like ['app','Foo'] into a parent component id."""
+        def parent_from_qualifier(
+            segments: List[str], parent: Optional[str] = None
+        ) -> Optional[str]:
+            """Turn a qualifier like ['app','Foo'] into a parent component id.
+
+            With the enclosing namespace ``parent``, the qualifier resolves from
+            there, as in C++: `logger::flush` in `namespace spdlog` and
+            `spdlog::logger::flush` both name the class `spdlog.logger`.
+            """
             if not segments:
                 return None
+            if parent:
+                enclosing = parent.split(".")
+                if segments[0] in enclosing:
+                    start = len(enclosing) - enclosing[::-1].index(segments[0]) - 1
+                    return ".".join(enclosing[:start] + segments)
+                return f"{parent}.{'.'.join(segments)}"
             if segments[0] in self._namespaces:
                 return ".".join(segments)
             return self.make_id(file_path, ".".join(segments))
@@ -515,12 +528,13 @@ class CppParser(BaseLanguageParser):
                     if scope_parent
                     else make_id(parent, simple_name)
                 )
+                # The definition keeps its file-local id and hangs under the class.
                 comp = self._build_function_component(
                     node,
                     func_decl,
                     component_id,
                     comp_type,
-                    scope_parent or parent,
+                    parent_from_qualifier(qualifier, parent) or parent,
                     Visibility.PUBLIC,
                     source_lines,
                 )

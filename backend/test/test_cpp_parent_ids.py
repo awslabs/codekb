@@ -3,7 +3,10 @@
 The parser read the owner of `void Logger::flush() {}` from the declarator text,
 so a macro, a template argument list or a return type that tree-sitter folded
 into the declarator became part of the owner (`APP_INLINE Sink<Mutex>`,
-`std.shared_ptr<Logger> Logger`) or of the name (`level APP_NO_EXPAND`).
+`std.shared_ptr<Logger> Logger`) or of the name (`level APP_NO_EXPAND`). It also
+built the owner id in the current file, so a definition in `logger-inl.h` pointed
+at a class that no component is, although `logger.h` declares it in the same
+namespace.
 """
 
 import tempfile
@@ -167,3 +170,17 @@ class TestTheOwnerIsReadFromTheTree:
         names = {c.get_simple_name() for c in analyze(IdScheme.V1_STEM)}
 
         assert "level APP_NO_EXPAND" in names
+
+
+class TestTheOwnerIsTheClassInTheEnclosingNamespace:
+    def test_the_definition_hangs_under_the_class_the_header_declares(self, components):
+        flush = defined(components, "flush", "Logger")
+
+        assert short(flush.parent_component) == "app.Logger"
+
+    def test_every_method_has_a_parent_that_exists(self, components):
+        ids = {short(c.id) for c in components}
+        methods = [c for c in components if c.type is ComponentType.METHOD]
+
+        assert methods
+        assert all(short(method.parent_component) in ids for method in methods)
