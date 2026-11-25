@@ -130,6 +130,11 @@ class FlowAnalyzer(IFlowAnalyzer):
             Dictionary mapping component names to their called components (for backward compatibility)
         """
         with ErrorContext(logger, "build call graph"):
+            # A fixed order gives the same lookup tables, and so the same graph,
+            # for a full index and for a refresh (which appends changed files).
+            components = sorted(
+                components, key=lambda comp: (str(comp.file_path), comp.line_number, comp.id)
+            )
             # Filter components to only include functions and methods
             callable_components = [
                 comp

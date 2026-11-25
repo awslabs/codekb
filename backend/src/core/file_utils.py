@@ -372,14 +372,16 @@ class FileScanner:
                 # Filter (and prune) directories based on exclusion patterns.
                 # Pruning here means excluded directories are never descended,
                 # so their whole subtree is skipped.
-                dirs[:] = [
+                # Sorted: os.walk order depends on the file system, and the scan
+                # order must not change the analysis result.
+                dirs[:] = sorted(
                     d
                     for d in dirs
                     if not self._is_excluded(root_path / d, directory_path, is_dir=True)
-                ]
+                )
 
                 # Yield files that pass initial filters
-                for file_name in files:
+                for file_name in sorted(files):
                     file_path = root_path / file_name
                     if not self._is_excluded(file_path, directory_path, is_dir=False):
                         yield file_path
