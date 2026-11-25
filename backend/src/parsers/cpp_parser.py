@@ -204,6 +204,22 @@ class CppParser(BaseLanguageParser):
                     )
                 setattr(component, "_cpp_is_def", True)
                 components[existing_idx] = component
+            elif (
+                is_definition
+                and self._scheme == IdScheme.V2_PATH
+                and component.type
+                in (ComponentType.FUNCTION, ComponentType.METHOD, ComponentType.CONSTRUCTOR)
+            ):
+                # Two definitions with one id in one file (`#if`/`#else` branches,
+                # overloads that only a template constraint tells apart) both stay;
+                # the later one gets a number, as `_disambiguate_overloads` does.
+                number = 2
+                while f"{component.id}{number}" in by_id:
+                    number += 1
+                component.id = f"{component.id}{number}"
+                by_id[component.id] = len(components)
+                components.append(component)
+                setattr(component, "_cpp_is_def", True)
             # else: keep the existing component (first definition / existing def).
 
         def make_id(parent: Optional[str], name: str) -> str:
