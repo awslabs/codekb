@@ -22,7 +22,8 @@ branches (namespaces, classes, templates, access specifiers).
 """
 
 import hashlib
-from typing import Dict, List, Optional, Any
+import re
+from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
 
 from .base_parser import BaseLanguageParser
@@ -62,6 +63,9 @@ _NAME_NODES = {
     "operator_name",
     "destructor_name",
 }
+
+# A name in capital letters is a macro (as `_CLASS_MACRO_RE` in tree_sitter_wrapper).
+_MACRO_NAME = re.compile(r"[A-Z_][A-Z0-9_]+")
 
 
 class CppParser(BaseLanguageParser):
@@ -483,23 +487,26 @@ class CppParser(BaseLanguageParser):
         func_decl = self._find_function_declarator(node)
         if func_decl is None:
             return
-        raw_name = self._declarator_name(func_decl, source_lines)
-        if not raw_name:
+        if self._scheme == IdScheme.V2_PATH:
+            qualifier, simple_name = self._qualified_name(
+                func_decl, source_lines, self._return_type(node, source_lines)
+            )
+        else:  # V1 keeps the text of the name, so its ids do not change.
+            segments = (self._declarator_name(func_decl, source_lines) or "").split("::")
+            qualifier, simple_name = [s for s in segments[:-1] if s], segments[-1]
+        if not simple_name:
             return
 
-        if "::" in raw_name:
+        if qualifier:
             # Qualified name: either an out-of-line member definition
             # (`app::Foo::bar`) or a namespace-scoped free function
             # (`app::freeHelper`). It's a member only when the segment directly
             # before the name is a type rather than a namespace.
-            segments = [s for s in raw_name.split("::") if s]
-            simple_name = segments[-1]
-            qualifier = segments[:-1]
-            owner_is_type = bool(qualifier) and qualifier[-1] not in self._namespaces
-            scope_parent = parent_from_qualifier(qualifier) if qualifier else parent
+            owner_is_type = qualifier[-1] not in self._namespaces
+            scope_parent = parent_from_qualifier(qualifier)
 
             if owner_is_type:
-                if simple_name == qualifier[-1]:
+                if simple_name == qualifier[-1].split("<", 1)[0]:  # `Box<int>::Box`
                     comp_type = ComponentType.CONSTRUCTOR
                 else:
                     comp_type = ComponentType.METHOD
@@ -537,7 +544,7 @@ class CppParser(BaseLanguageParser):
             return
 
         # Free function (or prototype).
-        component_id = make_id(parent, raw_name)
+        component_id = make_id(parent, simple_name)
         comp = self._build_function_component(
             node,
             func_decl,
@@ -804,6 +811,112 @@ class CppParser(BaseLanguageParser):
                 cur = self._wrapper_inner(cur)
             else:
                 return None
+        return None
+
+    def _qualified_name(
+        self, func_decl: Any, source_lines: List[str], return_type: Optional[str]
+    ) -> Tuple[List[str], Optional[str]]:
+        """Return (scopes, name) of a function_declarator: `Box<T>::get` gives (['Box'], 'get').
+
+        tree-sitter cannot expand a macro. With a macro before the name, it reads the
+        return type as scopes (`MACRO std::string Foo::bar`): this method drops the
+        scopes before a `::` that the source does not have, and takes the scope the
+        source wrote from an ERROR node. With a macro after the name (`thread::get_id
+        BOOST_PREVENT_MACRO_SUBSTITUTION ()`), the word before the missing `::` is
+        the name, unless the return type is a macro too (`DECL ns::type NAME()`).
+        """
+        segments: List[str] = []
+        node = func_decl.child_by_field_name("declarator")
+        qualified = node is not None and node.type == "qualified_identifier"
+        while node is not None and node.type == "qualified_identifier":
+            separator = next((child for child in node.children if child.type == "::"), None)
+            error = self._misplaced_name(node, source_lines)
+            scope = node.child_by_field_name("scope")
+            if separator is None or separator.is_missing:
+                after = node.child_by_field_name("name")
+                if (
+                    scope is not None
+                    and scope.type == "namespace_identifier"
+                    and after is not None
+                    and _MACRO_NAME.fullmatch(self._get_node_text(after, source_lines))
+                    and not _MACRO_NAME.fullmatch(return_type or "")
+                ):
+                    return segments, self._get_node_text(scope, source_lines)
+                segments = []
+            elif error is not None:
+                segments = [error]
+            elif scope is not None:
+                segments.append(self._scope_name(scope, source_lines))
+            node = node.child_by_field_name("name")
+        if node is None:
+            return segments, None
+        if node.type in ("template_function", "template_method"):
+            # A qualified name keeps its arguments: `get<array>` and `get<object>`.
+            if qualified:
+                return segments, self._get_node_text(node, source_lines)
+            node = node.child_by_field_name("name")
+        return segments, self._innermost_identifier(node, source_lines)
+
+    def _scope_name(self, scope: Any, source_lines: List[str]) -> str:
+        """Name of one scope. `Box<T>::get` in `template <class T>` is a member of `Box`.
+
+        A scope keeps template arguments that are not the enclosing template's
+        parameters, so `Box<int>::get` and `Box<T*>::get` stay members of the
+        specializations. Under `template <>`, the definition specializes a member
+        of the primary template (`Box<double>::get`), which stays its owner. A
+        macro in place of the template name (`MACRO Box<T>::get`) puts the name
+        the source wrote in an ERROR node.
+        """
+        error = self._misplaced_name(scope, source_lines)
+        if error is not None:
+            return error
+        name = scope.child_by_field_name("name")
+        arguments = scope.child_by_field_name("arguments")
+        if scope.type == "template_type" and name is not None and arguments is not None:
+            given = [
+                self._get_node_text(argument, source_lines).removesuffix("...").strip()
+                for argument in arguments.named_children
+                if argument.type != "comment"
+            ]
+            parameters = self._enclosing_template_parameters(scope, source_lines)
+            if given in parameters or [] in parameters:
+                return self._get_node_text(name, source_lines)
+        return self._get_node_text(scope, source_lines)
+
+    def _enclosing_template_parameters(self, node: Any, source_lines: List[str]) -> List[List]:
+        """Parameter names of each `template_declaration` that encloses ``node``."""
+        found = []
+        while (node := node.parent) is not None:
+            if node.type == "template_declaration":
+                parameters = node.child_by_field_name("parameters")
+                found.append(
+                    [
+                        self._innermost_identifier(
+                            param.child_by_field_name("name")
+                            or param.child_by_field_name("declarator")
+                            or param.named_children[-1],
+                            source_lines,
+                        )
+                        for param in (parameters.named_children if parameters else ())
+                        if param.type != "comment" and param.named_children
+                    ]
+                )
+        return found
+
+    def _misplaced_name(self, node: Any, source_lines: List[str]) -> Optional[str]:
+        """The last name in an ERROR child of ``node`` that holds only names, or None.
+
+        A macro in the place of a name puts the names tree-sitter could not place
+        in an ERROR node; with two macros, the return type comes first (`MACRO
+        MACRO error_code document::consume()`), and a reference or pointer return
+        type puts its `&` or `*` first (`MACRO T &logger::sinks()`). Other ERROR
+        content is not read.
+        """
+        for child in node.children:
+            if child.type == "ERROR":
+                names = [c for c in child.children if c.type not in ("&", "&&", "*")]
+                if names and all(name.type in _NAME_NODES for name in names):
+                    return self._get_node_text(names[-1], source_lines)
         return None
 
     def _declarator_name(self, func_decl: Any, source_lines: List[str]) -> Optional[str]:
