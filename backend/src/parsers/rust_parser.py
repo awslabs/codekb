@@ -2,7 +2,7 @@
 Rust-specific parser implementation.
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
 
 from .base_parser import BaseLanguageParser
@@ -119,11 +119,29 @@ class RustParser(BaseLanguageParser):
         """Extract components from Rust syntax tree."""
         components: List[Component] = []
         source_lines = source_code.decode("utf-8").split("\n")
-        # V2 only: an impl target is resolved in the tree. Legacy V1 spaces keep
-        # their ids, so a refresh does not change them.
+        # V2 only: an impl target is resolved in the tree, and an inline module is a
+        # component. Legacy V1 spaces keep their ids and components, so a refresh
+        # does not change them.
         v2 = self._scheme == IdScheme.V2_PATH
         declared = self._declared_ids(root_node, source_lines, file_path, None, set())
         scope_parent: Dict[str, Optional[str]] = {}  # inline module id -> enclosing scope
+        # (node, id, type, enclosing scope) of the inline modules, added after the walk
+        # when no other component has the id, so a function never loses its id.
+        pending: List[Tuple[Any, str, ComponentType, Optional[str]]] = []
+
+        def item_component(
+            node: Any, component_id: str, component_type: ComponentType, parent: Optional[str]
+        ) -> Component:
+            """An inline module or an impl block as a component; only a module has a visibility."""
+            attributes = ComponentAttributes(
+                signature=self._extract_signature(node, source_lines),
+                line_count=node.end_point[0] - node.start_point[0] + 1,
+            )
+            if node.type == "mod_item":
+                attributes.visibility = self._extract_visibility(node, source_lines)
+            return self._create_component(
+                component_id, component_type, node, file_path, "rust", attributes, parent
+            )
 
         def impl_parent_id(node: Any, scope: Optional[str]) -> Optional[str]:
             """The id of the type an impl block implements, or None for a type without a name.
@@ -177,6 +195,9 @@ class RustParser(BaseLanguageParser):
                 # external modules (mod foo;) have no body and are no-ops here.
                 for child in node.children:
                     if child.type == "declaration_list":
+                        pending.append(
+                            (node, mod_component_id, ComponentType.MODULE, parent_component)
+                        )
                         for grandchild in child.children:
                             extract_from_node(grandchild, mod_component_id)
                 return
@@ -227,6 +248,12 @@ class RustParser(BaseLanguageParser):
                 extract_from_node(child, parent_component)
 
         extract_from_node(root_node)
+        if v2:
+            ids = {component.id for component in components}
+            for node, component_id, component_type, parent in pending:
+                if component_id not in ids:
+                    ids.add(component_id)
+                    components.append(item_component(node, component_id, component_type, parent))
         return components
 
     def extract_function_parameters(

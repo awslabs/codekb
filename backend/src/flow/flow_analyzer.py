@@ -411,8 +411,11 @@ class FlowAnalyzer(IFlowAnalyzer):
                 )
 
             # Preserve the existing first-component-wins behavior for an
-            # ambiguous unqualified simple name.
-            if simple_name not in component_lookup:
+            # ambiguous unqualified simple name. A Rust module is not called, and
+            # can have the name of a function (`mod unbounded` and `fn unbounded`).
+            if simple_name not in component_lookup and not (
+                comp.language == "rust" and comp.type == ComponentType.MODULE
+            ):
                 component_lookup[simple_name] = comp.id
 
             if (

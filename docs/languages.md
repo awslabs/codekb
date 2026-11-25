@@ -15,7 +15,7 @@ CodeKB parses supported languages into components:
 | PHP | |
 | Python | |
 | Ruby | |
-| Rust | |
+| Rust | See [Rust notes](#rust) |
 | Terraform | HCL files |
 | TypeScript | |
 
@@ -44,3 +44,8 @@ Know these limits before relying on a Dart space, especially its call edges:
 
 Classes, mixins, extensions, extension types and typedefs are all stored as
 `class` components; the signature shows which one it is.
+
+## Rust
+
+- An inline `mod name { ... }` is a `module` component. A function in it is a
+  function, not a method, and a call to it by path (`name::f()`) gets an edge.

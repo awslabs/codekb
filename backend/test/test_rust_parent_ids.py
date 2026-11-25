@@ -3,7 +3,8 @@
 The parser typed every function with a parent as a method, so a function in an
 inline `mod` was a method. It built the parent of a method in an `impl` block from
 the type text, so `&'a mut Value` gave the parent `'a mut Value`, and an `impl` for
-a slice took the trait as its type.
+a slice took the trait as its type. A function in an inline `mod` hung under a
+module that was not a component.
 """
 
 import re
@@ -173,3 +174,20 @@ class TestTheImplTargetIsTheTypeName:
         components, _ = analyze({"value.rs": VALUE_RS, "parse.rs": PARSE_RS}, IdScheme.V1_STEM)
 
         assert "parse.'a mut Value.fmt" in components
+
+
+class TestAnInlineModuleIsAComponent:
+    def test_the_module_is_a_component(self, components):
+        assert components["parse.tests"].type is ComponentType.MODULE
+
+    def test_a_call_reaches_the_function_and_not_the_module_with_its_name(
+        self, components, call_graph
+    ):
+        assert components["parse.defaults"].type is ComponentType.MODULE
+        assert "value.defaults" in call_graph["parse.run"]
+
+    def test_a_function_keeps_its_id_from_a_module_with_its_name(self):
+        components, call_graph = analyze({"same.rs": SAME_NAME_RS})
+
+        assert components["same.unbounded"].type is ComponentType.FUNCTION
+        assert "same.unbounded.inner" in call_graph["same.unbounded"]
