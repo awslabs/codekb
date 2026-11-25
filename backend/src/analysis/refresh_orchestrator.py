@@ -1369,16 +1369,17 @@ class RefreshOrchestrator:
 
         # ── Compute stale callers via BFS ──────────────────────────────────
         # Seed the closure ONLY from components that are actually summarized —
-        # functions and methods. Non-callable components (classes, interfaces,
-        # enums, fields) are parsed and stored but never summarized (the call
-        # graph and the summarizer only cover FUNCTION/METHOD), so they carry no
-        # description that a caller could reference. A class or field changing —
-        # e.g. adding seed data to a list field, or a class annotation — must
-        # therefore NOT cascade into re-summarizing everything that uses it.
+        # functions and methods. Other components (classes, interfaces, enums,
+        # fields, constructors) are parsed and stored but never summarized (the
+        # summarizer only covers FUNCTION/METHOD; a constructor has call-graph
+        # edges but no description), so they carry no description that a caller
+        # could reference. A class or field changing — e.g. adding seed data to a
+        # list field, or a class annotation — must therefore NOT cascade into
+        # re-summarizing everything that uses it.
         #
         # A caller becomes stale only because a *callee's description* it saw
-        # changed; only callables have descriptions, so only changed/removed
-        # callables can make a caller stale.
+        # changed; only summarized components have descriptions, so only they
+        # can make a caller stale, and only they can be stale callers.
         #
         # Candidate callers include both unchanged-file components AND
         # hash-preserved components in changed files: any caller of a changed
@@ -1399,7 +1400,11 @@ class RefreshOrchestrator:
         )
         self._removed_callables = removed_callables
         seed: frozenset[str] = changed_callables | removed_callables
-        stale_candidates: frozenset[str] = preserved_component_ids | frozenset(hash_preserved)
+        stale_candidates: frozenset[str] = frozenset(
+            cid
+            for cid in preserved_component_ids | hash_preserved
+            if prior_by_id.get(cid) is not None and prior_by_id[cid].type in callable_types
+        )
         self._stale_candidates = stale_candidates
 
         # Callers further up never had the changed code in their prompt, so their text still holds.
