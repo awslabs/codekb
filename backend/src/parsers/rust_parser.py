@@ -107,9 +107,12 @@ class RustParser(BaseLanguageParser):
             for child in parent_node.children:
                 if child.type == "declaration_list":
                     for grandchild in child.children:
-                        extract_from_node(grandchild, parent_component)
+                        extract_from_node(grandchild, parent_component, in_type=True)
 
-        def extract_from_node(node: Any, parent_component: Optional[str] = None) -> None:
+        def extract_from_node(
+            node: Any, parent_component: Optional[str] = None, in_type: bool = False
+        ) -> None:
+            """``in_type`` is True inside an impl or trait body, where a fn is a method."""
             # Module: thread the module name through the parent chain.
             if node.type == "mod_item":
                 mod_name = self._extract_named_identifier(node, source_lines)
@@ -134,7 +137,7 @@ class RustParser(BaseLanguageParser):
                 for child in node.children:
                     if child.type == "declaration_list":
                         for grandchild in child.children:
-                            extract_from_node(grandchild, impl_parent)
+                            extract_from_node(grandchild, impl_parent, in_type=bool(impl_target))
                 return
 
             # Type containers: struct / enum / trait / union / type alias
@@ -152,7 +155,7 @@ class RustParser(BaseLanguageParser):
             # Free / impl / trait functions
             if node.type in _FUNCTION_NODES:
                 component = self._extract_function_component(
-                    node, source_lines, file_path, parent_component
+                    node, source_lines, file_path, parent_component, in_type
                 )
                 if component:
                     components.append(component)
@@ -221,8 +224,9 @@ class RustParser(BaseLanguageParser):
         source_lines: List[str],
         file_path: Path,
         parent_component: Optional[str],
+        in_type: bool = False,
     ) -> Optional[Component]:
-        """Extract a Rust function/method component."""
+        """Extract a Rust function/method component. ``in_type``: inside an impl or trait."""
         try:
             function_name = self._extract_named_identifier(node, source_lines)
             if not function_name:
@@ -234,7 +238,7 @@ class RustParser(BaseLanguageParser):
             visibility = self._extract_visibility(node, source_lines)
 
             # `static` in the OO sense = associated function (no self).
-            is_static = parent_component is not None and not self._has_self_parameter(node)
+            is_static = in_type and not self._has_self_parameter(node)
 
             # Trait method signatures have no body -> abstract.
             is_abstract = node.type == "function_signature_item"
@@ -249,9 +253,9 @@ class RustParser(BaseLanguageParser):
                 is_final=False,  # Rust has no `final`-equivalent for fns
             )
 
-            # Functions inside an impl/trait block (parent_component set) are
-            # methods; otherwise free functions.
-            component_type = ComponentType.METHOD if parent_component else ComponentType.FUNCTION
+            # Functions inside an impl/trait block are methods; a function in a
+            # module (`mod tests { fn helper() }`) is a free function.
+            component_type = ComponentType.METHOD if in_type else ComponentType.FUNCTION
 
             return self._create_component(
                 component_id,

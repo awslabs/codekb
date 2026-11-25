@@ -455,6 +455,16 @@ class FlowAnalyzer(IFlowAnalyzer):
                             f"{class_suffix}.{simple_name}", comp.id
                         )
 
+            if (
+                comp.type == ComponentType.FUNCTION
+                and comp.language == "rust"
+                and comp.parent_component
+            ):
+                # A function in a Rust module is called by its path (`scalar::iadd`,
+                # reported as `scalar.iadd`), which is not an id. Rust only.
+                module_name = comp.parent_component.split(".")[-1]
+                component_lookup[f"{module_name}.{simple_name}"] = comp.id
+
         # Note: a `receiver.method` call whose receiver TYPE is unknown is left
         # unresolved on purpose. We used to alias `<var>.<method>` to a class
         # whose name merely matched the variable's name case-insensitively (a
