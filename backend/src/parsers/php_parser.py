@@ -72,7 +72,11 @@ class PhpParser(BaseLanguageParser):
                 scope = self._get_node_text_simple(function_node).lower()
                 if scope in ("self", "static"):
                     return f"self.{method}"
-                return method
+
+                # parent:: names the base class of the enclosing class. Without a
+                # base clause (a trait, a class with no parent) there is no target.
+                base_class = self._base_class_of(function_node)
+                return f"{base_class}.{method}" if base_class else None
             class_name = self._simple_type_name(self._get_node_text_simple(function_node))
             return f"{class_name}.{method}"
 
@@ -432,6 +436,18 @@ class PhpParser(BaseLanguageParser):
         for child in object_creation_node.children:
             if child.type in ("name", "qualified_name"):
                 return self._simple_type_name(self._get_node_text_simple(child))
+        return None
+
+    def _base_class_of(self, node: Any) -> Optional[str]:
+        """Simple name of the class in the ``extends`` clause of the enclosing class."""
+        while node is not None and node.type not in ("class_declaration", "anonymous_class"):
+            node = node.parent
+        if node is None:
+            return None
+
+        for child in node.children:
+            if child.type == "base_clause":
+                return self._class_name_in(child)
         return None
 
     def _simple_type_name(self, text: Optional[str]) -> Optional[str]:

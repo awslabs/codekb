@@ -419,17 +419,14 @@ class FlowAnalyzer(IFlowAnalyzer):
             if simple_name not in component_lookup:
                 component_lookup[simple_name] = comp.id
 
-            if (
-                comp.type == ComponentType.CONSTRUCTOR
-                and comp.language == "dart"
-                and comp.parent_component
-            ):
-                # Dart alone calls a constructor by a name other than its class's:
-                # `Store.named(1)`, and `Store()` whose member name is `new`.
-                # Without both keys the resolver matches nothing and the edge is lost.
+            if comp.type == ComponentType.CONSTRUCTOR and comp.parent_component:
+                # A constructor can be called by `Class.name`: Dart `Store.named(1)`,
+                # PHP `parent::__construct()` (named after the base class by the
+                # parser). Dart alone also reaches the unnamed constructor, whose
+                # member name is `new`, by the class name: `Store()`.
                 class_name = comp.parent_component.split(".")[-1]
                 component_lookup[f"{class_name}.{simple_name}"] = comp.id
-                if simple_name == "new":
+                if comp.language == "dart" and simple_name == "new":
                     component_lookup[class_name] = comp.id
 
             if comp.type == ComponentType.METHOD and comp.parent_component:
