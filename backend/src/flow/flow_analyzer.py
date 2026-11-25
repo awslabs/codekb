@@ -69,6 +69,7 @@ from .dart_flow_support import (
     extract_dart_field_types,
 )
 from .typescript_flow_support import extract_typescript_field_types
+from .python_flow_support import PythonNameResolver
 
 
 logger = get_logger(__name__)
@@ -119,6 +120,9 @@ class FlowAnalyzer(IFlowAnalyzer):
         self._depth_cache: Optional[Dict[str, Any]] = None  # Cache for call graph depths
         self._scope_type_by_id: Dict[str, ComponentType] = {}
         self._span_by_id: Dict[str, Tuple[Path, int, int]] = {}  # file, first and last line
+        # Python receivers and bare names; built with the component lookup, released
+        # with the parsed trees.
+        self._python_name_resolver: Optional[PythonNameResolver] = None
 
     def build_call_graph(
         self, components: List[Component], tree_cache: Optional[Dict[str, Any]] = None
@@ -204,7 +208,9 @@ class FlowAnalyzer(IFlowAnalyzer):
             # Release the parsed trees now that call extraction is done — their
             # lifetime is scoped to this build. On-demand readers
             # (_get_cached_syntax_tree) re-parse on a miss, so clearing is safe.
+            # The Python resolver holds nodes of those trees, so it goes too.
             self._file_cache.clear()
+            self._python_name_resolver = None
 
             total_calls = sum(len(calls) for calls in self._call_graph.values())
             logger.info(f"Call graph built: {total_calls} total calls between components")
@@ -450,7 +456,10 @@ class FlowAnalyzer(IFlowAnalyzer):
                 # receiver that is genuinely an instance is resolved by its
                 # tracked type or a scoped field key, not by this. `self.m` and
                 # the exact-case `Class.m` (explicit class-qualified call) stay.
-                component_lookup[f"self.{simple_name}"] = comp.id
+                # Python resolves `self.m` through the caller's class
+                # (PythonNameResolver), never through a global name.
+                if comp.language != "python":
+                    component_lookup[f"self.{simple_name}"] = comp.id
                 component_lookup[f"{class_name}.{simple_name}"] = comp.id
 
                 # _extract_instance_assignments previously matched methods with
@@ -476,6 +485,9 @@ class FlowAnalyzer(IFlowAnalyzer):
         # mechanisms below are the only ways a qualified call resolves.
         self._add_instance_attribute_mappings(component_lookup, components, methods_by_class_suffix)
         self._build_scoped_lookup(component_lookup, components)
+        self._python_name_resolver = PythonNameResolver(
+            components, lambda path: self._get_cached_syntax_tree_for_file(path, "python")
+        )
 
         return component_lookup
 
@@ -642,6 +654,11 @@ class FlowAnalyzer(IFlowAnalyzer):
             if nested_key in component_lookup:
                 return component_lookup[nested_key]
 
+        if self._python_name_resolver is not None:
+            handled, target = self._python_name_resolver.resolve(call_name, caller_component)
+            if handled:
+                return target
+
         # Fall back to regular resolution
         target = component_lookup.get(call_name)
         caller = self._file_and_parent_by_id.get(caller_component)
@@ -774,12 +791,14 @@ class FlowAnalyzer(IFlowAnalyzer):
         Shares the per-file AST cache with the later call-extraction pass so a
         file is parsed at most once per run.
         """
-        cache_key = tree_cache_key(component.file_path, component.language)
+        return self._get_cached_syntax_tree_for_file(component.file_path, component.language)
+
+    def _get_cached_syntax_tree_for_file(self, file_path: Path, language: str) -> Any:
+        """The same, for a file that has no component (a Python re-export module)."""
+        cache_key = tree_cache_key(file_path, language)
         syntax_tree = self._file_cache.get(cache_key)
         if syntax_tree is None:
-            parse_result = self._tree_sitter_wrapper.parse_file(
-                component.file_path, component.language
-            )
+            parse_result = self._tree_sitter_wrapper.parse_file(file_path, language)
             syntax_tree = parse_result.syntax_tree
             self._file_cache[cache_key] = syntax_tree
         return syntax_tree
@@ -1085,8 +1104,19 @@ class FlowAnalyzer(IFlowAnalyzer):
         if not call_name:
             return
 
-        # Resolve call target
-        target_id = self._resolve_call_with_types(call_name, local_var_types, component_lookup)
+        # Resolve call target. Python receiver calls (self.x, cls.x, super().x)
+        # use the class hierarchy only, so a local type guess cannot override it.
+        python_receiver = (
+            language == "python"
+            and self._python_name_resolver is not None
+            and "." in call_name
+            and self._python_name_resolver.handles(call_name)
+        )
+        target_id = (
+            None
+            if python_receiver
+            else self._resolve_call_with_types(call_name, local_var_types, component_lookup)
+        )
         if not target_id:
             target_id = self._resolve_call_with_scope(call_name, component_id, component_lookup)
 

@@ -13,7 +13,7 @@ CodeKB parses supported languages into components:
 | JavaScript | |
 | Kotlin | |
 | PHP | |
-| Python | |
+| Python | See [Python notes](#python) |
 | Ruby | |
 | Rust | |
 | Terraform | HCL files |
@@ -44,3 +44,17 @@ Know these limits before relying on a Dart space, especially its call edges:
 
 Classes, mixins, extensions, extension types and typedefs are all stored as
 `class` components; the signature shows which one it is.
+
+## Python
+
+Call edges from Python code follow Python's own name rules:
+
+- `self.x()`, `cls.x()` and `super().x()` resolve through the caller's class and
+  its bases in method resolution order; base classes are found through the
+  module's imports. When a base class outside the repository (the standard
+  library, an installed package) comes before the method in that order, the call
+  gets no edge rather than a guess at a same-named method of an unrelated class.
+- A bare call such as `helper()` resolves through the enclosing functions, then
+  the module and its imports. A call to a parameter or to a builtin gets no edge.
+- A call through another object, such as `client.get()`, still needs a known type
+  for `client` (an annotation or an assignment in the same function).
