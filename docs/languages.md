@@ -57,4 +57,6 @@ Call edges from Python code follow Python's own name rules:
 - A bare call such as `helper()` resolves through the enclosing functions, then
   the module and its imports. A call to a parameter or to a builtin gets no edge.
 - A call through another object, such as `client.get()`, still needs a known type
-  for `client` (an annotation or an assignment in the same function).
+  for `client`: a parameter annotation, or an assignment from a class name in the
+  same function. A variable annotation (`client: Client = make()`) and an alias of
+  the class name (`client = C()` after `import Client as C`) do not give a type.
