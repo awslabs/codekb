@@ -276,8 +276,9 @@ def _build_rotating_cw_exporter_class() -> type:
                     return
                 if self._cw_logs_client is not None and self._cw_log_group:
                     _ensure_log_stream(self._cw_logs_client, self._cw_log_group, desired)
-                # Unsigned header, so it can change between exports safely.
-                self._session.headers["x-aws-log-stream"] = desired
+                # Per-request headers override session headers, so only this dict
+                # reaches the wire. Unsigned, so safe to change between exports.
+                self._client._headers["x-aws-log-stream"] = desired
                 self._cw_current_stream = desired
 
         def export(self, batch: Sequence[object]) -> object:
