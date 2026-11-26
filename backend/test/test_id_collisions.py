@@ -120,8 +120,10 @@ def test_terraform_same_address_distinct_across_stacks_v2():
     roles = [c for c in comps if c.get_simple_name() == "aws_iam_role.ecs_task_role"]
     assert len(roles) == 2
     assert len({c.id for c in roles}) == 2  # prefixed per file → distinct
-    # Display name stays the bare address (also the reference-resolution key).
-    assert all(c.name == "aws_iam_role.ecs_task_role" for c in roles)
+    # The name is the id; the address (the reference-resolution key) is read
+    # back from the end of the id.
+    assert all(c.name == c.id for c in roles)
+    assert all(c.id.endswith(".aws_iam_role.ecs_task_role") for c in roles)
 
 
 def test_terraform_v1_ids_unchanged():
@@ -212,6 +214,7 @@ def test_v1_legacy_behavior_is_unchanged():
     )
     cs = _methods(comps, "csharp")
     assert all("_" not in c.id.rsplit(".", 1)[-1] for c in cs)  # no overload hash suffix
+    assert all("#" not in c.id for c in cs)
     assert any(c.get_simple_name() == "Task" for c in cs)  # legacy return-type name kept
 
     # Kotlin: extension receiver NOT in the id, and locals ARE still emitted.
@@ -247,11 +250,11 @@ def test_cpp_disambiguator_widens_on_short_hash_collision():
     # Pre-seed the 4-char candidate for signature "int" with a DIFFERENT
     # signature, simulating a truncation collision.
     four = hashlib.sha1(b"int").hexdigest()[:4]
-    p._cpp_disc_sigs[f"X.f_{four}"] = "OTHER_SIGNATURE"
+    p._cpp_disc_sigs[f"X.f#{four}"] = "OTHER_SIGNATURE"
 
     got = p._disambiguated_cpp_id("X.f", "int")
-    assert got != f"X.f_{four}"          # did not reuse the taken short id
-    assert got.startswith("X.f_")
+    assert got != f"X.f#{four}"          # did not reuse the taken short id
+    assert got.startswith("X.f#")
     # Same signature again resolves to the same (widened) id -> decl/def merge.
     assert p._disambiguated_cpp_id("X.f", "int") == got
 
@@ -288,3 +291,82 @@ def test_overwrite_counter_increments_on_collision():
             )
         )
     assert catalog.get_statistics()["overwritten_components"] == 1
+
+
+# ── name == id, and call resolution keyed on the id alone ───────────────────
+
+
+def _call_graph(catalog):
+    from src.flow.flow_analyzer import FlowAnalyzer
+
+    return FlowAnalyzer(catalog).build_call_graph(catalog.get_all_components())
+
+
+def test_v2_overload_ids_use_disambig_sep_and_name_is_id():
+    _, comps = _analyze({"svc.cs": "class S { void Save(int a){} void Save(int a, bool b){} }"})
+    saves = [c for c in _methods(comps, "csharp") if c.get_simple_name() == "Save"]
+    assert len(saves) == 2
+    assert all(c.id.rsplit(".", 1)[-1].startswith("Save#") for c in saves)
+    assert all(c.name == c.id for c in comps)
+
+
+def test_v2_call_to_overload_resolves_to_first_indexed():
+    """Overloads stay distinct, and a call binds to exactly one of them."""
+    catalog, comps = _analyze(
+        {
+            "svc.cs": "class S { void Save(int a){} void Save(int a, bool b){} void Run(){ Save(1); } }"
+        }
+    )
+    run = next(c for c in comps if c.get_simple_name() == "Run")
+    saves = {c.id for c in comps if c.get_simple_name() == "Save"}
+    targets = _call_graph(catalog).get(run.id, [])
+    assert len(targets) == 1 and targets[0] in saves
+
+
+def test_v2_cpp_calls_resolve():
+    catalog, comps = _analyze(
+        {"a.cpp": "int add(int x){ return x; }\nint run(){ return add(1); }\n"}
+    )
+    add = next(c for c in _methods(comps, "cpp") if c.get_simple_name() == "add")
+    run = next(c for c in _methods(comps, "cpp") if c.get_simple_name() == "run")
+    assert "#" in add.id
+    assert _call_graph(catalog).get(run.id) == [add.id]
+
+
+def test_v2_terraform_references_resolve():
+    catalog, comps = _analyze(
+        {
+            "main.tf": (
+                'variable "region" {}\n'
+                'resource "aws_iam_role" "ecs_task_role" { name = var.region }\n'
+                'resource "aws_ecs_task_definition" "t" {'
+                " task_role_arn = aws_iam_role.ecs_task_role.arn }\n"
+            )
+        }
+    )
+    by_address = {c.get_simple_name(): c.id for c in comps if c.language == "terraform"}
+    graph = _call_graph(catalog)
+    assert graph[by_address["aws_ecs_task_definition.t"]] == [
+        by_address["aws_iam_role.ecs_task_role"]
+    ]
+    assert graph[by_address["aws_iam_role.ecs_task_role"]] == [by_address["var.region"]]
+
+
+def test_v1_terraform_references_resolve():
+    """V1 ids are space-qualified addresses; references still resolve against them."""
+    catalog, _ = _analyze(
+        {
+            "main.tf": (
+                'variable "region" {}\n'
+                'resource "aws_iam_role" "ecs_task_role" { name = var.region }\n'
+            )
+        },
+        scheme=IdScheme.V1_STEM,
+    )
+    assert _call_graph(catalog)["t::aws_iam_role.ecs_task_role"] == ["t::var.region"]
+
+
+def test_qualified_search_pattern_matches_v2_terraform():
+    catalog, _ = _analyze({"main.tf": 'resource "aws_iam_role" "ecs_task_role" { name = "a" }\n'})
+    hits = catalog.search_components("t::*ecs_task_role*")
+    assert [c.get_simple_name() for c in hits] == ["aws_iam_role.ecs_task_role"]

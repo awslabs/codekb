@@ -29,6 +29,10 @@ from pathlib import Path
 
 SPACE_SEP = "::"  # separates space_id from the local component id
 NAME_SEP = "."  # separates dotted segments within a local id
+# Separates an overload discriminator from the bare name in an id's trailing
+# segment (`Repo.Save#a1b2`). It cannot occur in an identifier in any supported
+# language, so the bare name is always recoverable from the id alone.
+DISAMBIG_SEP = "#"
 
 
 class IdScheme(Enum):
@@ -109,6 +113,21 @@ def split_space(qualified_id: str) -> Tuple[str, str]:
 def simple_name(qualified_or_local_id: str) -> str:
     """Return the last dotted segment of an id (its bare symbol name)."""
     return qualified_or_local_id.split(NAME_SEP)[-1]
+
+
+def _terraform_address(local_id: str) -> str:
+    """Return the Terraform reference address held at the end of a local id.
+
+    Works for V1 ids (`aws_s3_bucket.logs`) and V2 ids
+    (`main_<hash>.aws_s3_bucket.logs`). Taken from the END of the id because a
+    V2 file prefix can itself contain dots (`network.prod_<hash>`).
+    `data.TYPE.NAME` is three segments; every other address (TYPE.NAME, var.X,
+    local.X, module.X, output.X, provider.X) is two.
+    """
+    parts = local_id.split(NAME_SEP)
+    if len(parts) >= 3 and parts[-3] == "data":
+        return NAME_SEP.join(parts[-3:])
+    return NAME_SEP.join(parts[-2:])
 
 
 class ComponentType(Enum):
@@ -392,10 +411,6 @@ class Component:
     business_behavior: BusinessBehavior = field(default_factory=BusinessBehavior)
     parent_component: Optional[str] = None
     content_hash: Optional[str] = None
-    # Human-readable display name, persisted separately from the id so the id
-    # can carry a collision-free (possibly hashed) form. None → falls back to
-    # the id (see the `name` property). Lookups always key on `id`, never this.
-    _name: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Post-initialization validation and setup."""
@@ -406,8 +421,8 @@ class Component:
 
     @property
     def name(self) -> str:
-        """Get the display name: the persisted name if present, else the id."""
-        return self._name if self._name else self.id
+        """Get the display name. Always the id; kept for API/serialization compatibility."""
+        return self.id
 
     def get_simple_name(self) -> str:
         """Get the simple component name without parent context.
@@ -422,16 +437,18 @@ class Component:
         decides: a member's id is its parent plus one segment, an accessor's is
         its parent plus two. A parentless accessor from such a record reports its
         kind until the next refresh re-parses it.
-        """
-        # When the id carries a disambiguator in its trailing segment (an
-        # overload hash, e.g. `...Repo.Save_a1b2`), the clean bare name is held
-        # in `_name`. Prefer it so display and call-graph resolution key on the
-        # real name, not the hashed id segment. Gated off Dart, whose own
-        # accessor logic below reads the id's shape directly.
-        if self._name and self.language != "dart":
-            return self._name
 
-        segments = self.id.split(".")
+        The name is derived from the id alone. An overload discriminator on the
+        trailing segment (`...Repo.Save#a1b2`) is stripped, so every overload
+        reports the bare name and call resolution keys on it. A Terraform id
+        reports its reference address (`aws_iam_role.ecs_task_role`), which is
+        what Terraform references name.
+        """
+        if self.language == "terraform":
+            return _terraform_address(self.id.split(SPACE_SEP, 1)[-1])
+
+        segments = self.id.split(NAME_SEP)
+        segments[-1] = segments[-1].split(DISAMBIG_SEP, 1)[0]
         if self.language != "dart" or len(segments) < 2:
             return segments[-1]
 
@@ -472,7 +489,7 @@ class Component:
         """
         data: Dict[str, Any] = {
             "id": self.id,
-            "name": self.name,  # display name; falls back to id
+            "name": self.name,  # always equal to the id
             "type": self.type.value,
             "file_path": str(self.file_path),
             "line_number": self.line_number,
@@ -490,12 +507,10 @@ class Component:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Component":
         """Create component from dictionary representation."""
-        # Use id if available, fallback to name for backward compatibility
+        # Use id if available, fallback to name for backward compatibility.
+        # Otherwise a persisted "name" is ignored: the name is always the id,
+        # including for spaces that once stored a separate short name.
         component_id = data.get("id", data.get("name", ""))
-        # Keep a distinct display name only when it differs from the id; legacy
-        # data persisted name == id, which stays None here and falls back.
-        persisted_name = data.get("name")
-        display_name = persisted_name if (persisted_name and persisted_name != component_id) else None
         return cls(
             id=component_id,
             type=ComponentType(data["type"]),
@@ -508,7 +523,6 @@ class Component:
             business_behavior=BusinessBehavior.from_dict(data.get("business_behavior", {})),
             parent_component=data.get("parent_component"),
             content_hash=data.get("content_hash"),
-            _name=display_name,
         )
 
 

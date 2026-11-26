@@ -118,40 +118,65 @@ def test_path_prefix_keeps_readable_stem():
     assert prefix.startswith("service_")
 
 
-# ── Component.name: persisted-else-id fallback ──────────────────────────────
+# ── Component.name: always the id ───────────────────────────────────────────
 
-def _component(cid: str, name: str | None = None) -> Component:
+def _component(cid: str, language: str = "python") -> Component:
     return Component(
         id=cid,
         type=ComponentType.FUNCTION,
         file_path=Path("f.py"),
         line_number=1,
         end_line_number=2,
-        language="python",
-        _name=name,
+        language=language,
     )
 
 
-def test_name_falls_back_to_id():
+def test_name_is_id():
     assert _component("sp::stem.fn").name == "sp::stem.fn"
 
 
-def test_name_uses_persisted_display_name():
-    assert _component("sp::hash.fn", name="PaymentService.handle").name == "PaymentService.handle"
-
-
-def test_component_dict_round_trip_without_name():
+def test_component_dict_round_trip_name_is_id():
     c = _component("sp::stem.fn")
-    back = Component.from_dict(c.to_dict())
-    assert back.name == "sp::stem.fn"
-    assert back._name is None  # equal-to-id name is not retained as distinct
+    data = c.to_dict()
+    assert data["name"] == "sp::stem.fn"
+    assert Component.from_dict(data).name == "sp::stem.fn"
 
 
-def test_component_dict_round_trip_with_distinct_name():
-    c = _component("sp::hash.fn", name="Payment.handle")
-    back = Component.from_dict(c.to_dict())
-    assert back._name == "Payment.handle"
-    assert back.name == "Payment.handle"
+def test_from_dict_ignores_persisted_short_name():
+    """Spaces indexed before name == id stored a separate short name; it is ignored."""
+    data = _component("sp::hash.Payment.handle").to_dict()
+    data["name"] = "Payment.handle"
+    back = Component.from_dict(data)
+    assert back.name == "sp::hash.Payment.handle"
+    assert back.get_simple_name() == "handle"
+
+
+# ── Component.get_simple_name: derived from the id only ─────────────────────
+
+def test_simple_name_strips_overload_discriminator():
+    assert _component("sp::svc_ab12cd34ef56.Repo.Save#a1b2").get_simple_name() == "Save"
+    assert _component("sp::svc_ab12cd34ef56.Repo.Save#p2").get_simple_name() == "Save"
+    assert _component("sp::a_ab12cd34ef56.A.f#9c0e1", "cpp").get_simple_name() == "f"
+
+
+def test_simple_name_keeps_underscored_names():
+    """Only DISAMBIG_SEP marks a discriminator; hex-looking name endings are kept."""
+    assert _component("sp::m_ab12cd34ef56.is_added").get_simple_name() == "is_added"
+
+
+@pytest.mark.parametrize(
+    "cid, address",
+    [
+        ("sp::main_ab12cd34ef56.aws_iam_role.ecs_task_role", "aws_iam_role.ecs_task_role"),
+        ("sp::main_ab12cd34ef56.data.aws_ami.ubuntu", "data.aws_ami.ubuntu"),
+        ("sp::main_ab12cd34ef56.var.region", "var.region"),
+        ("sp::network.prod_ab12cd34ef56.module.vpc", "module.vpc"),  # dotted file stem
+        ("sp::aws_s3_bucket.logs", "aws_s3_bucket.logs"),  # V1
+        ("sp::data.aws_ami.ubuntu", "data.aws_ami.ubuntu"),  # V1
+    ],
+)
+def test_terraform_simple_name_is_reference_address(cid, address):
+    assert _component(cid, "terraform").get_simple_name() == address
 
 
 def test_legacy_component_dict_without_name_key():
