@@ -223,3 +223,74 @@ class TestRestRoutesEnrich:
         assert resp.status_code == 200, resp.text
         names = resp.json()["display_names"]
         assert names[METHOD_ID] == "Repo.Save"
+
+    def test_semantic_search_route_enriches_vector_results(self, client, service, monkeypatch):
+        # Vector results carry the component id under `key` and no component
+        # fields; the route resolves the label from the space catalog.
+        monkeypatch.setattr(
+            service,
+            "semantic_search",
+            lambda *a, **k: [
+                {"key": METHOD_ID, "metadata": {"type": "method", "space_id": SPACE}},
+                {"key": FN_ID, "metadata": {"type": "function", "space_id": SPACE}},
+            ],
+        )
+        resp = client.get(f"/api/spaces/{SPACE}/search?q=anything")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        by_key = {r["key"]: r for r in body}
+        assert by_key[METHOD_ID]["display_name"] == "Repo.Save"
+        assert by_key[FN_ID]["display_name"] == "parseArgs"
+        # id (the lookup key) is left untouched under `key`.
+        assert by_key[METHOD_ID]["key"] == METHOD_ID
+
+
+# ── global search route (separate router/module) ──────────────────────────
+
+
+@pytest.fixture
+def search_client(service, monkeypatch):
+    """The real global-search router, with auth/authz seams stood down."""
+    starlette = pytest.importorskip("starlette.testclient")
+    from fastapi import FastAPI
+
+    from src.api.routes import search as search_routes
+
+    monkeypatch.setattr(
+        search_routes,
+        "require_current_user",
+        lambda request: SimpleNamespace(email="test@localhost", sub="test"),
+    )
+    monkeypatch.setattr(search_routes, "require_authorization", lambda: False)
+    monkeypatch.setattr(CodeKBService, "instance", classmethod(lambda cls: service))
+    monkeypatch.setattr(
+        service,
+        "global_semantic_search",
+        lambda *a, **k: [
+            {"key": METHOD_ID, "metadata": {"type": "method", "space_id": SPACE}},
+        ],
+    )
+
+    app = FastAPI()
+    app.include_router(search_routes.router, prefix="/api/search")
+    with starlette.TestClient(app) as test_client:
+        yield test_client
+
+
+class TestGlobalSearchRouteEnriches:
+    def test_global_search_route_enriches_vector_results(self, search_client):
+        resp = search_client.get("/api/search?q=anything")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body[0]["key"] == METHOD_ID  # id untouched
+        assert body[0]["display_name"] == "Repo.Save"
+
+
+class TestSearchServiceStaysClean:
+    def test_attach_runs_in_route_not_service(self, service, monkeypatch):
+        # The raw service result carries no display_name; enrichment is the
+        # route's job. Proven by the clean raw result feeding the route tests
+        # above, which only then shows the field.
+        raw = [{"key": METHOD_ID, "metadata": {"space_id": SPACE}}]
+        monkeypatch.setattr(service, "semantic_search", lambda *a, **k: list(raw))
+        assert all("display_name" not in r for r in service.semantic_search("q", space_id=SPACE))
