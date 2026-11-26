@@ -412,8 +412,8 @@ class CodeAnalyzer:
         return self._component_repository.get_statistics()
 
     # Component kinds that can legitimately repeat a name in one scope (method
-    # overloads, overloaded top-level/free functions). Restricted to leaves so
-    # renaming an id never orphans a child that embeds it as a parent prefix.
+    # overloads, overloaded top-level/free functions). Not classes: renaming a
+    # class would also change the ids of all its members.
     _OVERLOADABLE = frozenset(
         {ComponentType.METHOD, ComponentType.FUNCTION, ComponentType.CONSTRUCTOR}
     )
@@ -427,14 +427,21 @@ class CodeAnalyzer:
         signature to each colliding id and record the clean bare name in
         ``_name`` (so ``get_simple_name`` and call resolution still key on the
         real name). Non-colliding ids are untouched.
+
+        A component nested in a renamed definition (a function or a variable
+        inside the implementation of an ``@overload`` group) gets the new id as
+        its parent, as the Ruby and Dart qualifiers do when they change ids.
         """
         import hashlib
         from collections import defaultdict
 
         groups: Dict[str, List["Component"]] = defaultdict(list)
+        children_by_parent: Dict[str, List["Component"]] = defaultdict(list)
         for comp in components:
             if comp.type in self._OVERLOADABLE:
                 groups[comp.id].append(comp)
+            if comp.parent_component:
+                children_by_parent[comp.parent_component].append(comp)
 
         for comp_id, group in groups.items():
             if len(group) < 2:
@@ -462,6 +469,14 @@ class CodeAnalyzer:
                 if not comp._name:
                     comp._name = comp.get_simple_name()
                 comp.id = f"{comp.id}_{unique}"
+
+            # The children still name the old id; each one belongs to the
+            # member whose lines hold it.
+            for child in children_by_parent.get(comp_id, ()):
+                for member in group:
+                    if member.line_number <= child.line_number <= member.end_line_number:
+                        child.parent_component = member.id
+                        break
 
     def _analyze_file(self, file_path: Path) -> ParseResult:
         """

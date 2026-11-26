@@ -275,8 +275,9 @@ class TestComponentLookupConstruction:
         assert lookup[method.id] == method.id
         assert lookup["method:save"] == method.id
         assert lookup["save"] == method.id
-        # Legitimate keys: `self.m` and the exact-case, class-qualified call.
-        assert lookup["self.save"] == method.id
+        # Legitimate key: the exact-case, class-qualified call. A Python `self.m`
+        # call resolves through the caller's class, so it has no global key.
+        assert "self.save" not in lookup
         assert lookup["OrderService.save"] == method.id
         # Coincidental receiver-name → class guesses must NOT resolve. Neither a
         # variable/constant that merely matches the class name case-insensitively

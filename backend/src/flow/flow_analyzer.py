@@ -69,12 +69,18 @@ from .dart_flow_support import (
     extract_dart_field_types,
 )
 from .typescript_flow_support import extract_typescript_field_types
+from .python_flow_support import PythonNameResolver
 
 
 logger = get_logger(__name__)
 
 # Languages where an unqualified call inside a class can name another member of it.
 _BARE_CALLS_REACH_MEMBERS = frozenset({"java", "csharp", "cpp", "kotlin", "dart", "c"})
+# Component types whose body is a scope: a component nested in one is local to it.
+_LOCAL_SCOPE_TYPES = (ComponentType.FUNCTION, ComponentType.METHOD, ComponentType.CONSTRUCTOR)
+# Languages where a function defined inside a method is still visible outside it
+# (a Ruby `def` inside a method defines a method of the enclosing class).
+_NESTED_DEFINITIONS_ARE_GLOBAL = frozenset({"ruby"})
 
 
 class FlowAnalyzer(IFlowAnalyzer):
@@ -112,6 +118,11 @@ class FlowAnalyzer(IFlowAnalyzer):
             defaultdict(list)
         )
         self._depth_cache: Optional[Dict[str, Any]] = None  # Cache for call graph depths
+        self._scope_type_by_id: Dict[str, ComponentType] = {}
+        self._span_by_id: Dict[str, Tuple[Path, int, int]] = {}  # file, first and last line
+        # Python receivers and bare names; built with the component lookup, released
+        # with the parsed trees.
+        self._python_name_resolver: Optional[PythonNameResolver] = None
 
     def build_call_graph(
         self, components: List[Component], tree_cache: Optional[Dict[str, Any]] = None
@@ -130,6 +141,11 @@ class FlowAnalyzer(IFlowAnalyzer):
             Dictionary mapping component names to their called components (for backward compatibility)
         """
         with ErrorContext(logger, "build call graph"):
+            # A fixed order gives the same lookup tables, and so the same graph,
+            # for a full index and for a refresh (which appends changed files).
+            components = sorted(
+                components, key=lambda comp: (str(comp.file_path), comp.line_number, comp.id)
+            )
             # Filter components to only include functions and methods
             callable_components = [
                 comp
@@ -192,7 +208,9 @@ class FlowAnalyzer(IFlowAnalyzer):
             # Release the parsed trees now that call extraction is done — their
             # lifetime is scoped to this build. On-demand readers
             # (_get_cached_syntax_tree) re-parse on a miss, so clearing is safe.
+            # The Python resolver holds nodes of those trees, so it goes too.
             self._file_cache.clear()
+            self._python_name_resolver = None
 
             total_calls = sum(len(calls) for calls in self._call_graph.values())
             logger.info(f"Call graph built: {total_calls} total calls between components")
@@ -394,6 +412,8 @@ class FlowAnalyzer(IFlowAnalyzer):
         self._typed_method_lookup = {}
         self._file_and_parent_by_id = {}
         self._ids_by_file_and_name = defaultdict(list)
+        self._scope_type_by_id = {}
+        self._span_by_id = {}
 
         # Create the base lookup and collect the secondary indexes in one pass.
         for comp in components:
@@ -405,15 +425,12 @@ class FlowAnalyzer(IFlowAnalyzer):
                 comp.parent_component,
                 comp.language,
             )
+            self._scope_type_by_id[comp.id] = comp.type
+            self._span_by_id[comp.id] = (comp.file_path, comp.line_number, comp.end_line_number)
             if comp.type in (ComponentType.FUNCTION, ComponentType.METHOD):
                 self._ids_by_file_and_name[(comp.file_path, simple_name)].append(
                     (comp.id, comp.parent_component)
                 )
-
-            # Preserve the existing first-component-wins behavior for an
-            # ambiguous unqualified simple name.
-            if simple_name not in component_lookup:
-                component_lookup[simple_name] = comp.id
 
             if (
                 comp.type == ComponentType.CONSTRUCTOR
@@ -439,7 +456,10 @@ class FlowAnalyzer(IFlowAnalyzer):
                 # receiver that is genuinely an instance is resolved by its
                 # tracked type or a scoped field key, not by this. `self.m` and
                 # the exact-case `Class.m` (explicit class-qualified call) stay.
-                component_lookup[f"self.{simple_name}"] = comp.id
+                # Python resolves `self.m` through the caller's class
+                # (PythonNameResolver), never through a global name.
+                if comp.language != "python":
+                    component_lookup[f"self.{simple_name}"] = comp.id
                 component_lookup[f"{class_name}.{simple_name}"] = comp.id
 
                 # _extract_instance_assignments previously matched methods with
@@ -465,6 +485,9 @@ class FlowAnalyzer(IFlowAnalyzer):
         # mechanisms below are the only ways a qualified call resolves.
         self._add_instance_attribute_mappings(component_lookup, components, methods_by_class_suffix)
         self._build_scoped_lookup(component_lookup, components)
+        self._python_name_resolver = PythonNameResolver(
+            components, lambda path: self._get_cached_syntax_tree_for_file(path, "python")
+        )
 
         return component_lookup
 
@@ -565,14 +588,56 @@ class FlowAnalyzer(IFlowAnalyzer):
     def _build_scoped_lookup(
         self, component_lookup: Dict[str, str], components: List[Component]
     ) -> None:
-        """Build nested-function aliases without parent-by-child cross scans."""
+        """Build nested-function aliases without parent-by-child cross scans.
+
+        A component nested in a function (a local variable, a closure) is visible
+        only in that function and in the functions nested in it, so it gets only
+        the key ``<parent id>::<name>``. Every other component also keeps the
+        first-component-wins key under its bare simple name.
+        """
         component_ids = {comp.id for comp in components}
         for nested in components:
             parent_id = nested.parent_component
-            if not parent_id or parent_id not in component_ids:
-                continue
             simple_name = nested.get_simple_name()
-            component_lookup[f"{parent_id}::{simple_name}"] = nested.id
+            if parent_id and parent_id in component_ids:
+                component_lookup[f"{parent_id}::{simple_name}"] = nested.id
+
+            is_local = self._is_local_scope(parent_id, nested.id) and not (
+                nested.language in _NESTED_DEFINITIONS_ARE_GLOBAL
+                and nested.type in (ComponentType.FUNCTION, ComponentType.METHOD)
+            )
+            if simple_name not in component_lookup and not is_local:
+                component_lookup[simple_name] = nested.id
+
+    def _is_local_scope(self, scope_id: Optional[str], component_id: str) -> bool:
+        """True when ``scope_id`` is a function-like component whose lines hold the component.
+
+        The line check guards against a parent id that another component took over
+        (a parser can give a function the id of the class it is named after).
+        """
+        if not scope_id or self._scope_type_by_id.get(scope_id) not in _LOCAL_SCOPE_TYPES:
+            return False
+
+        scope = self._span_by_id.get(scope_id)
+        inner = self._span_by_id.get(component_id)
+        if scope is None or inner is None:
+            return False
+
+        same_file = scope[0] == inner[0]
+        return same_file and scope[1] <= inner[1] and inner[2] <= scope[2]
+
+    def _enclosing_function_scopes(self, caller_component: str) -> List[str]:
+        """Ids of the functions that enclose a caller, nearest first.
+
+        Stops at a class body and on a cycle in the parent links.
+        """
+        scopes: List[str] = []
+        current = caller_component
+        parent = self._file_and_parent_by_id.get(current, (None, None, None))[1]
+        while parent and parent not in scopes and self._is_local_scope(parent, current):
+            scopes.append(parent)
+            current, parent = parent, self._file_and_parent_by_id[parent][1]
+        return scopes
 
     def _resolve_call_with_scope(
         self, call_name: str, caller_component: str, component_lookup: Dict[str, str]
@@ -582,6 +647,17 @@ class FlowAnalyzer(IFlowAnalyzer):
         scoped_key = f"{caller_component}::{call_name}"
         if scoped_key in component_lookup:
             return component_lookup[scoped_key]
+
+        # A function nested in an enclosing function is visible here too.
+        for scope_id in self._enclosing_function_scopes(caller_component):
+            nested_key = f"{scope_id}::{call_name}"
+            if nested_key in component_lookup:
+                return component_lookup[nested_key]
+
+        if self._python_name_resolver is not None:
+            handled, target = self._python_name_resolver.resolve(call_name, caller_component)
+            if handled:
+                return target
 
         # Fall back to regular resolution
         target = component_lookup.get(call_name)
@@ -715,12 +791,14 @@ class FlowAnalyzer(IFlowAnalyzer):
         Shares the per-file AST cache with the later call-extraction pass so a
         file is parsed at most once per run.
         """
-        cache_key = tree_cache_key(component.file_path, component.language)
+        return self._get_cached_syntax_tree_for_file(component.file_path, component.language)
+
+    def _get_cached_syntax_tree_for_file(self, file_path: Path, language: str) -> Any:
+        """The same, for a file that has no component (a Python re-export module)."""
+        cache_key = tree_cache_key(file_path, language)
         syntax_tree = self._file_cache.get(cache_key)
         if syntax_tree is None:
-            parse_result = self._tree_sitter_wrapper.parse_file(
-                component.file_path, component.language
-            )
+            parse_result = self._tree_sitter_wrapper.parse_file(file_path, language)
             syntax_tree = parse_result.syntax_tree
             self._file_cache[cache_key] = syntax_tree
         return syntax_tree
@@ -1026,8 +1104,19 @@ class FlowAnalyzer(IFlowAnalyzer):
         if not call_name:
             return
 
-        # Resolve call target
-        target_id = self._resolve_call_with_types(call_name, local_var_types, component_lookup)
+        # Resolve call target. Python receiver calls (self.x, cls.x, super().x)
+        # use the class hierarchy only, so a local type guess cannot override it.
+        python_receiver = (
+            language == "python"
+            and self._python_name_resolver is not None
+            and "." in call_name
+            and self._python_name_resolver.handles(call_name)
+        )
+        target_id = (
+            None
+            if python_receiver
+            else self._resolve_call_with_types(call_name, local_var_types, component_lookup)
+        )
         if not target_id:
             target_id = self._resolve_call_with_scope(call_name, component_id, component_lookup)
 

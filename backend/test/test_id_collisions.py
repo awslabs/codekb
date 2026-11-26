@@ -201,6 +201,33 @@ def test_python_overloads_and_accessors_get_semantic_discriminator():
     assert {c.attributes.signature for c in vals} == {"def val(self)", "def val(self, v)"}
 
 
+def test_children_of_disambiguated_definitions_get_the_new_parent_id():
+    """A function nested in the implementation of an @overload group must point at
+    the implementation's suffixed id, not at the old shared id that no component
+    has any more (the call graph's scoped lookup needs an existing parent)."""
+    _, comps = _analyze(
+        {
+            "m.py": (
+                "from typing import overload\n"
+                "@overload\n"
+                "def f(x: int) -> int: ...\n"
+                "@overload\n"
+                "def f(x: str) -> str: ...\n"
+                "def f(x):\n"
+                "    def inner():\n"
+                "        return x\n"
+                "    return inner()\n"
+            )
+        }
+    )
+    ids = {c.id for c in comps}
+    implementation = next(c for c in _methods(comps, "python") if c.line_number == 6)
+    inner = next(c for c in comps if c.get_simple_name() == "inner")
+
+    assert inner.parent_component == implementation.id
+    assert all(c.parent_component in ids for c in comps if c.parent_component)
+
+
 def test_v1_legacy_behavior_is_unchanged():
     """All id-changing collision fixes are gated to V2; V1 spaces are untouched
     so delta-refresh keeps regenerating ids that match the persisted ones."""
