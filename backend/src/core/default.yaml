@@ -12,8 +12,10 @@
 # Logging
 logging:
   level: INFO
-  # At DEBUG, full API and AWS SDK payloads are logged and the
-  # botocore/boto3/httpx/strands loggers join in.
+  # Level for the botocore/boto3/httpx/strands loggers, independent of level.
+  # DEBUG logs every AWS request and response. Override: CODEKB_THIRD_PARTY_LOG_LEVEL.
+  third_party_level: WARNING
+  # At DEBUG, full API and AWS SDK payloads are logged.
   # Cap per-payload size (characters). 0 = unlimited. Override: CODEKB_LOG_PAYLOAD_MAX.
   payload_max_chars: 4000
 
