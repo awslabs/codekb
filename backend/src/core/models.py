@@ -142,6 +142,36 @@ class CallType(Enum):
     CONDITIONAL = "conditional"
     LOOP = "loop"
     RECURSIVE = "recursive"
+    # Implicit edge: the "callee" is a handler the framework runs for an
+    # annotation on the caller (e.g. Spring AOP advice for
+    # `@Around("@annotation(X)")`). Nothing in the caller's body invokes it.
+    ANNOTATION = "annotation"
+
+
+# ---------------------------------------------------------------------------
+# Call-graph edge format
+#
+# A call-graph entry is `(callee_id, line)` for a direct call, or
+# `(handler_id, line, EDGE_KIND_ANNOTATION)` for an implicit link from an
+# annotated method to an in-repo handler that MAY run for it (see
+# flow.annotation_edges). Knowledge bases persisted before the third element
+# existed hold only 2-element entries, so readers must treat it as optional:
+# use the two helpers below instead of tuple unpacking.
+# ---------------------------------------------------------------------------
+
+EDGE_KIND_ANNOTATION = "annotation"
+
+
+def call_edge_target(edge: Any) -> Any:
+    """Return the callee id of a call-graph edge of any supported shape."""
+    return edge[0] if isinstance(edge, (tuple, list)) and edge else edge
+
+
+def call_edge_kind(edge: Any) -> Optional[str]:
+    """Return the edge kind, or None for a plain (direct-call) edge."""
+    if isinstance(edge, (tuple, list)) and len(edge) > 2:
+        return edge[2]
+    return None
 
 
 class CouplingStrength(Enum):
@@ -624,6 +654,11 @@ class DependencyAnalysis:
         circular_dependencies: Components in circular dependency chains
         coupling_strength: Overall coupling strength assessment
         dependents: Components that depend on this component
+        advised_by: Handlers implicitly bound to this component through an
+            annotation (EDGE_KIND_ANNOTATION edges). Kept out of
+            direct_dependencies so tools never present them as direct calls
+        advises: Components this handler implicitly applies to (the reverse of
+            advised_by). Kept out of dependents for the same reason
     """
 
     component: str
@@ -633,6 +668,8 @@ class DependencyAnalysis:
     circular_dependencies: List[str] = field(default_factory=list)
     coupling_strength: CouplingStrength = CouplingStrength.LOW
     dependents: List[str] = field(default_factory=list)
+    advised_by: List[str] = field(default_factory=list)
+    advises: List[str] = field(default_factory=list)
 
     def get_all_dependencies(self) -> List[str]:
         """Get all dependencies (direct + transitive) without duplicates."""
@@ -641,7 +678,7 @@ class DependencyAnalysis:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert dependency analysis to dictionary representation."""
-        return {
+        data: Dict[str, Any] = {
             "component": self.component,
             "direct_dependencies": self.direct_dependencies,
             "transitive_dependencies": self.transitive_dependencies,
@@ -650,6 +687,13 @@ class DependencyAnalysis:
             "coupling_strength": self.coupling_strength.value,
             "dependents": self.dependents,
         }
+        # Additive and opt-in: a component with no implicit annotation edges
+        # serializes exactly as it did before these fields existed.
+        if self.advised_by:
+            data["advised_by"] = self.advised_by
+        if self.advises:
+            data["advises"] = self.advises
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "DependencyAnalysis":
@@ -662,6 +706,8 @@ class DependencyAnalysis:
             circular_dependencies=data.get("circular_dependencies", []),
             coupling_strength=CouplingStrength(data.get("coupling_strength", "low")),
             dependents=data.get("dependents", []),
+            advised_by=data.get("advised_by", []),
+            advises=data.get("advises", []),
         )
 
 

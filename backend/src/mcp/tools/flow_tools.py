@@ -111,8 +111,15 @@ def _format_flow(flow: dict) -> str:
     lines.append("\n   Flow Steps:")
     for i, step in enumerate(steps[:15]):
         indent = "   " + "  " * step.get("depth", 0)
+        # An annotation step is implicit: the component is a handler
+        # the framework runs for the caller, not a call in the caller's body.
+        arrow = (
+            "--(advised by, implicit)-->"
+            if step.get("call_type") == "annotation"
+            else "-->"
+        )
         lines.append(
-            f"   {i + 1:2d}. {indent}{step.get('caller', '?')} --> {step.get('component', '?')}"
+            f"   {i + 1:2d}. {indent}{step.get('caller', '?')} {arrow} {step.get('component', '?')}"
         )
     if len(steps) > 15:
         lines.append(f"   ... and {len(steps) - 15} more steps")
@@ -136,6 +143,20 @@ def _format_dependencies(deps: dict) -> str:
             lines.append(f"     {dep}")
         if len(direct) > 10:
             lines.append(f"     ... and {len(direct) - 10} more")
+    advised_by = deps.get("advised_by", [])
+    if advised_by:
+        lines.append("\n   Advised by (implicit annotation handlers, not direct calls):")
+        for dep in advised_by[:10]:
+            lines.append(f"     {dep}")
+        if len(advised_by) > 10:
+            lines.append(f"     ... and {len(advised_by) - 10} more")
+    advises = deps.get("advises", [])
+    if advises:
+        lines.append("\n   Advises (methods this handler implicitly wraps):")
+        for dep in advises[:10]:
+            lines.append(f"     {dep}")
+        if len(advises) > 10:
+            lines.append(f"     ... and {len(advises) - 10} more")
     return "\n".join(lines)
 
 
@@ -152,14 +173,44 @@ def _format_call_graph(
     seen.add(func_id)
 
     prefix = "  " * indent
+    # Rendered over an implicit annotation edge: the node is a handler
+    # the framework runs for the annotated caller above, not a direct callee.
+    is_annotation_edge = node.get("edge_kind") == "annotation"
+    # Rendered under a direct call (the parent visibly calls it) while ALSO
+    # being an annotation handler elsewhere in this graph: a non-exclusive
+    # note that never denies the direct call. Both markers are constant text.
+    is_dual_role = node.get("also_annotation_handler") and not is_annotation_edge
+    # Mirror direction: rendered under an annotation edge while some node in
+    # this graph ALSO calls it directly — the rendering edge is still the
+    # implicit one, so this is an additional note, not a replacement.
+    also_called_directly = node.get("also_called_directly") and is_annotation_edge
     if raw:
-        output.append(f"{prefix}{node['id']} ({node['type']})")
+        header = f"{prefix}{node['id']} ({node['type']})"
+        if is_annotation_edge:
+            header += " [advised by: implicit annotation handler, not a direct call]"
+            if also_called_directly:
+                header += " [also called directly elsewhere in this graph]"
+        elif is_dual_role:
+            header += " [also an implicit annotation handler for annotated methods in this graph]"
+        output.append(header)
         output.append(f"{prefix}SOURCE:")
         for line in wrap_external(node["source"]).split("\n"):
             output.append(f"{prefix}  {line}")
     else:
         output.append(f"{prefix}├─ {node['id']}")
         output.append(f"{prefix}│  Type: {node['type']}")
+        if is_annotation_edge:
+            output.append(
+                f"{prefix}│  Relation: advised by (implicit annotation handler, not a direct call)"
+            )
+            if also_called_directly:
+                output.append(
+                    f"{prefix}│  Note: also called directly elsewhere in this graph"
+                )
+        elif is_dual_role:
+            output.append(
+                f"{prefix}│  Note: also an implicit annotation handler for annotated methods in this graph"
+            )
         output.append(f"{prefix}│  Location: {node['file']}:{node['lines']}")
         output.append(f"{prefix}│  Source:")
         source_lines = node["source"].split("\n")

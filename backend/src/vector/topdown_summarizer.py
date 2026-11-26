@@ -456,7 +456,24 @@ Start your response with { and end with }"""
         if node_types is not None:
             node_types[func_id] = node.get("type")
         prefix = "  " * indent
-        output.append(f"{prefix}{node['id']} ({node['type']})")
+        header = f"{prefix}{node['id']} ({node['type']})"
+        if node.get("edge_kind") == "annotation":
+            # Rendered over an annotation edge (an implicit handler), not a
+            # direct callee: the framework runs it for the annotated caller
+            # above. The marker sits AFTER the (type) parens so the CACHED
+            # DESCRIPTION rewrite in _replace_source_with_descriptions still
+            # matches the line.
+            header += " [annotation handler: runs implicitly for the annotated caller above]"
+            if node.get("also_called_directly"):
+                # Mirror direction: some node in this graph also calls it
+                # directly. Constant text, after the (type) parens.
+                header += " [also called directly elsewhere in this graph]"
+        elif node.get("also_annotation_handler"):
+            # Rendered under a direct call, but also the target of annotation
+            # edges elsewhere in this graph: a non-exclusive note that never
+            # denies the direct call. Constant text, after the (type) parens.
+            header += " [also an implicit annotation handler for annotated methods in this graph]"
+        output.append(header)
         output.append(f"{prefix}SOURCE:")
         for line in node["source"].split("\n"):
             output.append(f"{prefix}  {line}")
