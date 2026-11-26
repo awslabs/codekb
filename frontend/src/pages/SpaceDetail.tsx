@@ -92,6 +92,7 @@ export default function SpaceDetail() {
   const [searchPattern, setSearchPattern] = useState("");
   const [typeFilter, setTypeFilter] = useState(TYPE_OPTIONS[0]);
   const [components, setComponents] = useState<Record<string, any>[]>([]);
+  const [searchedPattern, setSearchedPattern] = useState<string | null>(null);
   const [compLoading, setCompLoading] = useState(false);
 
   // Explorer: semantic search
@@ -100,6 +101,7 @@ export default function SpaceDetail() {
   const [semanticTopK, setSemanticTopK] = useState<string>(String(defaultTopK));
   const semanticTopKTouched = useRef(false);
   const [semanticResults, setSemanticResults] = useState<Record<string, any>[]>([]);
+  const [searchedSemanticQuery, setSearchedSemanticQuery] = useState<string | null>(null);
   const [semanticLoading, setSemanticLoading] = useState(false);
 
   // Seed the Top K input from config once it arrives, unless the user has
@@ -300,11 +302,13 @@ export default function SpaceDetail() {
   const handleComponentSearch = async () => {
     if (!spaceId) return;
     setCompLoading(true);
+    setSyntacticDetail(null); setSyntacticFlow(null); setSyntacticDeps(null);
     try {
       const params: { pattern?: string; type?: string } = {};
       if (searchPattern.trim()) params.pattern = searchPattern.trim();
       if (typeFilter.value) params.type = typeFilter.value;
       setComponents(await api.listComponents(spaceId, params));
+      setSearchedPattern(searchPattern.trim());
     } catch (e: any) { showError(`Component search failed: ${e.message}`); }
     finally { setCompLoading(false); }
   };
@@ -312,7 +316,11 @@ export default function SpaceDetail() {
   const handleSemanticSearch = async () => {
     if (!spaceId || !semanticQuery.trim()) return;
     setSemanticLoading(true);
-    try { setSemanticResults(await api.semanticSearch(spaceId, semanticQuery.trim(), parseInt(semanticTopK) || defaultTopK)); }
+    setSemanticDetail(null); setSemanticFlow(null); setSemanticDeps(null);
+    try {
+      setSemanticResults(await api.semanticSearch(spaceId, semanticQuery.trim(), parseInt(semanticTopK) || defaultTopK));
+      setSearchedSemanticQuery(semanticQuery.trim());
+    }
     catch (e: any) { showError(`Semantic search failed: ${e.message}`); }
     finally { setSemanticLoading(false); }
   };
@@ -1361,7 +1369,10 @@ export default function SpaceDetail() {
           content: (
             <SpaceBetween size="l">
               <Table loading={compLoading} loadingText="Searching..." items={components} trackBy="id"
-                empty={<Box textAlign="center" padding="l" color="inherit">Run a search to see components</Box>}
+                empty={<Box textAlign="center" padding="l" color="inherit">
+                  {searchedPattern === null ? "Run a search to see components"
+                    : searchedPattern ? `No components match "${searchedPattern}"` : "No components found"}
+                </Box>}
                 header={<Header counter={`(${components.length})`}>Syntactic Results</Header>}
                 filter={
                   <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -1401,7 +1412,10 @@ export default function SpaceDetail() {
           content: (
             <SpaceBetween size="l">
             <Table loading={semanticLoading} loadingText="Searching vector store..." items={semanticResults} trackBy="key" wrapLines
-              empty={<Box textAlign="center" padding="l" color="inherit">Enter a query to search the vector store</Box>}
+              empty={<Box textAlign="center" padding="l" color="inherit">
+                {searchedSemanticQuery === null ? "Enter a query to search the vector store"
+                  : `No results for "${searchedSemanticQuery}"`}
+              </Box>}
               header={<Header counter={`(${semanticResults.length})`}>Semantic results</Header>}
               filter={
                 <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
