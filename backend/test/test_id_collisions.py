@@ -10,6 +10,7 @@ These tests pin the fixes that keep such declarations distinct:
   4. C# method name read from the `name` field, not the return type.
   5. Terraform addresses prefixed per-file under V2 (unchanged under V1).
   6. ComponentCatalog counts overwrites in its statistics.
+  7. Two C/C++ definitions with one id in one file (`#if` / `#else`) both stay.
 """
 
 import tempfile
@@ -151,6 +152,18 @@ def test_cpp_overloads_do_not_collide_v2():
     fs = [c for c in _methods(comps, "cpp") if c.get_simple_name() == "f"]
     assert len(fs) == 3
     assert len({c.id for c in fs}) == 3  # distinct via parameter-type signature
+
+
+def test_cpp_two_definitions_with_one_id_in_a_file_both_stay_v2():
+    _, comps = _analyze(
+        {
+            "a.cpp": "#ifdef _WIN32\nint f(int x){ return 1; }\n#else\nint f(int x){ return 2; }\n#endif\n"
+        },
+        scheme=IdScheme.V2_PATH,
+    )
+    fs = [c for c in _methods(comps, "cpp") if c.get_simple_name() == "f"]
+    assert sorted(c.line_number for c in fs) == [2, 4]
+    assert len({c.id for c in fs}) == 2
 
 
 def test_cpp_prototype_and_definition_still_merge_v2():

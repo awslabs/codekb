@@ -212,6 +212,7 @@ class ComponentType(Enum):
     CONSTANT = "constant"
     ENUM = "enum"
     CONSTRUCTOR = "constructor"
+    IMPLEMENTATION = "implementation"  # a Rust `impl` block
 
 
 class Visibility(Enum):

@@ -5,7 +5,7 @@ CodeKB parses supported languages into components:
 | Language | Additional notes |
 |---|---|
 | C | |
-| C++ | |
+| C++ | See [C++ notes](#c) |
 | C# | |
 | Dart | See [Dart notes](#dart) |
 | Go | |
@@ -15,7 +15,7 @@ CodeKB parses supported languages into components:
 | PHP | |
 | Python | |
 | Ruby | |
-| Rust | |
+| Rust | See [Rust notes](#rust) |
 | Terraform | HCL files |
 | TypeScript | |
 
@@ -44,3 +44,21 @@ Know these limits before relying on a Dart space, especially its call edges:
 
 Classes, mixins, extensions, extension types and typedefs are all stored as
 `class` components; the signature shows which one it is.
+
+## Rust
+
+- An `impl` block for a type that the file does not define (a type from another
+  file or crate, a type parameter, a primitive type) is stored as an
+  `implementation` component named after that type, and its methods hang under
+  it. A type with impl blocks in several files has one such component per file.
+- An inline `mod name { ... }` is a `module` component. A function in it is a
+  function, not a method, and a call to it by path (`name::f()`) gets an edge.
+
+## C++
+
+- A class head that tree-sitter does not read, such as a macro followed by an
+  attribute (`class GTEST_API_ [[nodiscard]] Name {`), is not indexed. A member
+  of that class defined outside it gets a parent that no component has.
+- A namespace opened by a macro (`FMT_BEGIN_NAMESPACE`) is not read. A class
+  declared in it and its members defined in another file stand at file scope,
+  so those members get a parent that no component has.

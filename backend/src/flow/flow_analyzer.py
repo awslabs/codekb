@@ -75,6 +75,8 @@ logger = get_logger(__name__)
 
 # Languages where an unqualified call inside a class can name another member of it.
 _BARE_CALLS_REACH_MEMBERS = frozenset({"java", "csharp", "cpp", "kotlin", "dart", "c"})
+# Rust components that a call name never means.
+_RUST_NOT_CALLED = frozenset({ComponentType.MODULE, ComponentType.IMPLEMENTATION})
 
 
 class FlowAnalyzer(IFlowAnalyzer):
@@ -411,8 +413,12 @@ class FlowAnalyzer(IFlowAnalyzer):
                 )
 
             # Preserve the existing first-component-wins behavior for an
-            # ambiguous unqualified simple name.
-            if simple_name not in component_lookup:
+            # ambiguous unqualified simple name. A Rust module or impl block is
+            # not called, and can have the name of a function (`mod unbounded`
+            # and `fn unbounded`; `impl Index for I` and `fn I()`).
+            if simple_name not in component_lookup and not (
+                comp.language == "rust" and comp.type in _RUST_NOT_CALLED
+            ):
                 component_lookup[simple_name] = comp.id
 
             if (
@@ -454,6 +460,16 @@ class FlowAnalyzer(IFlowAnalyzer):
                         self._typed_method_lookup.setdefault(
                             f"{class_suffix}.{simple_name}", comp.id
                         )
+
+            if (
+                comp.type == ComponentType.FUNCTION
+                and comp.language == "rust"
+                and comp.parent_component
+            ):
+                # A function in a Rust module is called by its path (`scalar::iadd`,
+                # reported as `scalar.iadd`), which is not an id. Rust only.
+                module_name = comp.parent_component.split(".")[-1]
+                component_lookup[f"{module_name}.{simple_name}"] = comp.id
 
         # Note: a `receiver.method` call whose receiver TYPE is unknown is left
         # unresolved on purpose. We used to alias `<var>.<method>` to a class
