@@ -519,6 +519,7 @@ class ConfigurationManager(IConfigurationManager):
         "CODEKB_S3_VECTORS_INDEX": "storage.s3_vectors.index_name",
         "CODEKB_S3_VECTORS_DEFAULT_TOP_K": "storage.s3_vectors.default_top_k",
         "CODEKB_LOG_LEVEL": "logging.level",
+        "CODEKB_THIRD_PARTY_LOG_LEVEL": "logging.third_party_level",
         "CODEKB_LOG_PAYLOAD_MAX": "logging.payload_max_chars",
         # LLM shared defaults. The model and max_tokens keep their original
         # CODEKB_BEDROCK_* names; the per-workload overrides are generated
