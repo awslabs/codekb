@@ -26,7 +26,7 @@ from collections import OrderedDict
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, NamedTuple
 from urllib.parse import unquote, urlparse
 
 from botocore.exceptions import ClientError
@@ -36,6 +36,7 @@ from ..analysis.git_ops import redact_git_url, run_git
 from ..persistence.knowledge_base_manager import KnowledgeBaseManager
 from ..core.config import ConfigError, get_config, require_config
 from ..core.file_utils import LEGACY_DEFAULT_EXCLUDE_PATTERNS, discard_directory
+from ..core.language_directive import LanguageDirective, resolve_language_directive
 from ..core.logging_utils import ConfigurationError, get_logger
 from ..core.token_usage import operation_usage
 from ..gitcreds.providers import ProviderError, VisibilityError, get_provider, get_visibility
@@ -616,6 +617,13 @@ def safe_extract_zip(zf: zipfile.ZipFile, dest: Path, max_extract_bytes: int) ->
     zf.extractall(dest)
 
 
+class SpaceLanguageSettingsView(NamedTuple):
+    """Raw per-space output languages as stored (None when unset)."""
+
+    overview_language: str | None
+    analysis_language: str | None
+
+
 class CodeKBService:
     """Service layer for CodeKB — a process-wide singleton.
 
@@ -1039,6 +1047,8 @@ class CodeKBService:
                 "component_count": status.get("component_count", 0),
                 "created_at": status.get("created_at") or status.get("started_at"),
                 "created_by": status.get("created_by"),
+                "overview_language": status.get("overview_language"),
+                "analysis_language": status.get("analysis_language"),
                 "version": status.get("version", "1.0"),
                 # Empty on legacy spaces → resolves to the V1 stem scheme.
                 "id_scheme": status.get("id_scheme", ""),
@@ -1064,6 +1074,8 @@ class CodeKBService:
             "component_count": kb.get_component_count(),
             "created_at": kb.created_at,
             "created_by": None,
+            "overview_language": None,
+            "analysis_language": None,
             "version": kb.version,
             "id_scheme": kb.id_scheme,
             "statistics": ctx.statistics,
@@ -1253,6 +1265,36 @@ class CodeKBService:
             raise ServiceError(error_msg) from e
 
     # ── S3 status helpers ───────────────────────────────────────────────
+
+    def read_space_language_settings(self, space_id: str) -> SpaceLanguageSettingsView:
+        """Raw per-space output languages (None when unset; no defaulting).
+
+        Raises SpaceNotFoundError when the space has no status record.
+        """
+        status = self._read_status(space_id)
+        if status is None:
+            raise SpaceNotFoundError(space_id)
+        return SpaceLanguageSettingsView(
+            overview_language=status.get("overview_language"),
+            analysis_language=status.get("analysis_language"),
+        )
+
+    def _resolve_language(self, space_id: str, field: str, purpose: str) -> LanguageDirective:
+        """Resolve one language setting; any read failure falls back to the default."""
+        value: str | None = None
+        try:
+            value = getattr(self.read_space_language_settings(space_id), field)
+        except Exception as e:
+            logger.warning(
+                f"Could not read {field} for space '{space_id}', using default: {e}"
+            )
+        return resolve_language_directive(value, space_id=space_id, purpose=purpose)
+
+    def _resolve_overview_language(self, space_id: str) -> LanguageDirective:
+        return self._resolve_language(space_id, "overview_language", "overview")
+
+    def _resolve_analysis_language(self, space_id: str) -> LanguageDirective:
+        return self._resolve_language(space_id, "analysis_language", "analysis")
 
     def read_status(self, space_id: str) -> dict[str, Any] | None:
         """Public seam: a space's status record, or None. Used by authz/backfill."""
@@ -1965,6 +2007,7 @@ class CodeKBService:
                 codekb_service=self,
                 on_progress=_on_progress,
                 omit_low_business_relevance=omit_low_business_relevance,
+                language_directive=self._resolve_analysis_language(space_id),
             )
             summary_stats = asyncio.run(summarizer.summarize_all())
             stopped_early = summary_stats.get("stopped_early")
@@ -2070,6 +2113,7 @@ class CodeKBService:
             generator = SpaceOverviewGenerator(
                 space_id=space_id,
                 on_progress=_on_progress,
+                language_directive=self._resolve_overview_language(space_id),
             )
             result = generator.generate_all()
 
@@ -2383,6 +2427,10 @@ class CodeKBService:
             final_data["omit_low_business_relevance"] = existing_status[
                 "omit_low_business_relevance"
             ]
+        # Set once at creation; the rebuild above would otherwise drop them.
+        for _lang_field in ("overview_language", "analysis_language"):
+            if _lang_field in existing_status:
+                final_data[_lang_field] = existing_status[_lang_field]
         if existing_status.get("space_overview_docs"):
             final_data["space_overview_docs"] = existing_status["space_overview_docs"]
         business_context = existing_status.get("business_context") or (
@@ -2431,6 +2479,8 @@ class CodeKBService:
         created_by: str | None = None,
         actor_sub: str | None = None,
         visibility: str | None = None,
+        overview_language: str | None = None,
+        analysis_language: str | None = None,
     ) -> dict[str, Any]:
         """Create a new space from a Git repository and start analysis.
 
@@ -2468,6 +2518,12 @@ class CodeKBService:
             initial_status["admitted_by"] = created_by
         if actor_sub:
             initial_status["created_by_sub"] = actor_sub
+        # Output languages are set once here, stored verbatim (resolution
+        # validates at use). Unset stays absent, not null.
+        if overview_language is not None:
+            initial_status["overview_language"] = overview_language
+        if analysis_language is not None:
+            initial_status["analysis_language"] = analysis_language
 
         source_dir = self._analysis_work_path(space_id)
         # Reserve before the first status write: a 429 must not leave an
@@ -2790,6 +2846,8 @@ class CodeKBService:
         omit_low_business_relevance: bool = False,
         created_by: str | None = None,
         actor_sub: str | None = None,
+        overview_language: str | None = None,
+        analysis_language: str | None = None,
     ) -> dict[str, Any]:
         """Start analysis of an uploaded zip file.
 
@@ -2861,6 +2919,11 @@ class CodeKBService:
                         f"Maximum allowed is {limit_mb} MB."
                     ),
                     "started_at": datetime.now(timezone.utc).isoformat(),
+                    **{
+                        k: existing_status[k]
+                        for k in ("overview_language", "analysis_language")
+                        if k in existing_status
+                    },
                 },
             )
             raise ServiceError(
@@ -2885,6 +2948,16 @@ class CodeKBService:
         effective_created_by_sub = existing_status.get("created_by_sub") or actor_sub
         if effective_created_by_sub:
             status_data["created_by_sub"] = effective_created_by_sub
+        # A language in this request wins; otherwise keep what the PENDING_UPLOAD
+        # record already holds. Unset stays absent, not null.
+        for _lang_field, _lang_value in (
+            ("overview_language", overview_language),
+            ("analysis_language", analysis_language),
+        ):
+            if _lang_value is not None:
+                status_data[_lang_field] = _lang_value
+            elif _lang_field in existing_status:
+                status_data[_lang_field] = existing_status[_lang_field]
 
         source_dir = self._analysis_work_path(space_id)
         # Reserve before the ANALYZING write: on a 429 the status record and the

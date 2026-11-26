@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import Box from "@cloudscape-design/components/box";
@@ -20,17 +21,15 @@ import { api, ApiError, GitCredential } from "../api/client";
 const PROVIDER_META: Record<string, { label: string; scopes: string }> = {
   github: {
     label: "GitHub",
-    scopes:
-      "Classic PAT: repo (plus read:org if org membership matters). "
-      + "Fine-grained PAT: access to the repos, with Metadata: read and Contents: read.",
+    scopes: "gitCredentials.scopesGithub",
   },
   gitlab: {
     label: "GitLab",
-    scopes: "read_api (plus read_repository to clone).",
+    scopes: "gitCredentials.scopesGitlab",
   },
   bitbucket: {
     label: "Bitbucket",
-    scopes: "account and repository (read).",
+    scopes: "gitCredentials.scopesBitbucket",
   },
 };
 
@@ -44,6 +43,7 @@ interface Draft {
 const emptyDraft: Draft = { username: "", token: "" };
 
 export default function GitCredentials() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [loading, setLoading] = useState(true);
@@ -90,7 +90,7 @@ export default function GitCredentials() {
       const r = results[i];
       if (r.status === "fulfilled") {
         nextVerify[id] = "ok";
-        nextMessages[id] = { type: "success", text: `Verified — connected as ${r.value.username}.` };
+        nextMessages[id] = { type: "success", text: t("gitCredentials.verifiedAs", { username: r.value.username }) };
       } else {
         // A rejected token (git_credentials_expired / 401) is Expired, not just
         // unverified, so the card can prompt a reconnect.
@@ -99,7 +99,7 @@ export default function GitCredentials() {
         nextVerify[id] = expired ? "expired" : "bad";
         nextMessages[id] = {
           type: "error",
-          text: reason instanceof Error ? reason.message : "Verification failed.",
+          text: reason instanceof Error ? reason.message : t("gitCredentials.verificationFailed"),
         };
       }
     });
@@ -136,7 +136,7 @@ export default function GitCredentials() {
   const save = async (id: string) => {
     const draft = draftFor(id);
     if (!draft.username.trim() || !draft.token.trim()) {
-      setMessage(id, "error", "Enter both a username and a token.");
+      setMessage(id, "error", t("gitCredentials.enterBoth"));
       return;
     }
     setBusy(id);
@@ -146,14 +146,14 @@ export default function GitCredentials() {
         username: draft.username.trim(),
         token: draft.token,
       });
-      setMessage(id, "success", `Saved. Connected as ${res.username}.`);
+      setMessage(id, "success", t("gitCredentials.savedAs", { username: res.username }));
       setEditing((e) => ({ ...e, [id]: false }));
       setDrafts((d) => ({ ...d, [id]: emptyDraft }));
       // Which private spaces are listed depends on this token.
       queryClient.invalidateQueries({ queryKey: ["spaces"] });
       load();
     } catch (e) {
-      setMessage(id, "error", e instanceof Error ? e.message : "Could not save the connection.");
+      setMessage(id, "error", e instanceof Error ? e.message : t("gitCredentials.saveFailed"));
     } finally {
       setBusy(null);
     }
@@ -168,7 +168,7 @@ export default function GitCredentials() {
       queryClient.invalidateQueries({ queryKey: ["spaces"] });
       load();
     } catch (e) {
-      setMessage(id, "error", e instanceof Error ? e.message : "Could not delete the credential.");
+      setMessage(id, "error", e instanceof Error ? e.message : t("gitCredentials.deleteFailed"));
     } finally {
       setBusy(null);
     }
@@ -183,24 +183,24 @@ export default function GitCredentials() {
     const msg = messages[id];
     return (
       <SpaceBetween size="m">
-        <FormField label="Username">
+        <FormField label={t("gitCredentials.username")}>
           <Input
             value={draftFor(id).username}
             onChange={(e) => setDraft(id, { username: e.detail.value })}
-            placeholder={`Your ${meta.label} username`}
+            placeholder={t("gitCredentials.usernamePlaceholder", { provider: meta.label })}
             disabled={isBusy}
           />
         </FormField>
         <FormField
-          label="Personal access token"
-          description="Stored encrypted."
-          constraintText={meta.scopes ? `Minimum token scopes — ${meta.scopes}` : undefined}
+          label={t("gitCredentials.token")}
+          description={t("gitCredentials.tokenDescription")}
+          constraintText={meta.scopes ? t("gitCredentials.minimumScopes", { scopes: t(meta.scopes) }) : undefined}
         >
           <Input
             type="password"
             value={draftFor(id).token}
             onChange={(e) => setDraft(id, { token: e.detail.value })}
-            placeholder={isExisting ? "Enter a new token to replace the saved one" : "Paste your token"}
+            placeholder={isExisting ? t("gitCredentials.tokenPlaceholderExisting") : t("gitCredentials.tokenPlaceholderNew")}
             disabled={isBusy}
           />
         </FormField>
@@ -208,11 +208,11 @@ export default function GitCredentials() {
           <SpaceBetween size="xs" direction="horizontal">
             {isExisting && (
               <Button variant="link" onClick={() => cancelEdit(id)} disabled={isBusy}>
-                Cancel
+                {t("common.cancel")}
               </Button>
             )}
             <Button variant="primary" onClick={() => save(id)} loading={isBusy}>
-              Save
+              {t("gitCredentials.save")}
             </Button>
           </SpaceBetween>
         </Box>
@@ -252,10 +252,10 @@ export default function GitCredentials() {
                     display="inline"
                   >
                     {verify[id] === "expired"
-                      ? "Expired"
+                      ? t("gitCredentials.expired")
                       : verify[id] === "bad"
-                        ? "Unverified"
-                        : "Verified"}
+                        ? t("gitCredentials.unverified")
+                        : t("gitCredentials.verified")}
                   </Box>
                 </div>
                 {conn.username && (
@@ -264,9 +264,9 @@ export default function GitCredentials() {
               </div>
               <SpaceBetween size="xs" direction="horizontal">
                 {!isEditing && (
-                  <Button onClick={() => startEdit(id)} disabled={isBusy}>Update</Button>
+                  <Button onClick={() => startEdit(id)} disabled={isBusy}>{t("gitCredentials.update")}</Button>
                 )}
-                <Button onClick={() => disconnect(id)} loading={isBusy}>Delete</Button>
+                <Button onClick={() => disconnect(id)} loading={isBusy}>{t("gitCredentials.delete")}</Button>
               </SpaceBetween>
             </div>
           }
@@ -287,7 +287,7 @@ export default function GitCredentials() {
   return (
     <SpaceBetween size="l">
       <BreadcrumbGroup
-        items={[{ text: "CodeKB", href: "/" }, { text: "Git credentials", href: "/git-creds" }]}
+        items={[{ text: t("common.breadcrumbRoot"), href: "/" }, { text: t("components.navGitCredentials"), href: "/git-creds" }]}
         onFollow={(e) => { e.preventDefault(); navigate(e.detail.href); }}
       />
 
@@ -296,22 +296,20 @@ export default function GitCredentials() {
         actions={
           Object.keys(connected).length > 0 ? (
             <Button iconName="refresh" onClick={checkAll} loading={checking}>
-              Check status
+              {t("gitCredentials.checkStatus")}
             </Button>
           ) : undefined
         }
-        description="Connect a personal access token to analyze private repositories. Tokens are stored encrypted and never shown again. Public repositories work without a connection. Changes to your access in git can take up to 4 hours to show up in CodeKB."
+        description={t("gitCredentials.description")}
       >
-        Git credentials
+        {t("components.navGitCredentials")}
       </Header>
 
       {loading ? (
         <Box textAlign="center" padding="xxl"><Spinner size="large" /></Box>
       ) : providers.length === 0 ? (
-        <Alert type="info" header="Git credentials are not enabled">
-          No git providers are configured on this instance, so credentials can't be added.
-          Public repositories can still be analyzed. Ask your administrator to configure a
-          provider and the git-credentials KMS key.
+        <Alert type="info" header={t("gitCredentials.notEnabledHeader")}>
+          {t("gitCredentials.notEnabledBody")}
         </Alert>
       ) : (
         <SpaceBetween size="l">{providers.map(renderProvider)}</SpaceBetween>

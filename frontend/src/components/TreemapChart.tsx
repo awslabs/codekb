@@ -1,4 +1,5 @@
 import { useMemo, useState, useRef, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { SpaceSummary, Hyperspace } from "../api/client";
 
@@ -253,6 +254,7 @@ const CHART_W = 1200;
 const CHART_H = 700;
 
 export default function TreemapChart({ spaces, hyperspaces, hint }: TreemapChartProps) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -265,9 +267,9 @@ export default function TreemapChart({ spaces, hyperspaces, hint }: TreemapChart
   const handleMouseEnter = useCallback((e: React.MouseEvent, cell: LayoutNode) => {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const text = `${cell.label} — ${cell.value.toLocaleString()} components${cell.languages?.length ? ` · ${cell.languages.join(", ")}` : ""}${cell.group ? ` · ${cell.group}` : ""}`;
+    const text = `${cell.label} — ${cell.value.toLocaleString()} ${t("common.components")}${cell.languages?.length ? ` · ${cell.languages.join(", ")}` : ""}${cell.group ? ` · ${cell.group}` : ""}`;
     setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top - 14, text });
-  }, []);
+  }, [t]);
 
   if (cells.length === 0) return null;
 
@@ -296,7 +298,7 @@ export default function TreemapChart({ spaces, hyperspaces, hint }: TreemapChart
           viewBox={`0 0 ${CHART_W} ${CHART_H}`}
           style={{ width: "100%", height: "60vh", display: "block" }}
           role="img"
-          aria-label="Treemap of spaces sized by component count"
+          aria-label={t("components.treemapAriaLabel")}
         >
           {/* Hyperspace group backgrounds */}
           {groups.map((g) => {

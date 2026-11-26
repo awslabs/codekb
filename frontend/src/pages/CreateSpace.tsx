@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Form from "@cloudscape-design/components/form";
 import FormField from "@cloudscape-design/components/form-field";
@@ -25,6 +27,11 @@ import Icon from "@cloudscape-design/components/icon";
 import Badge from "@cloudscape-design/components/badge";
 import LanguagePills, { SUPPORTED_LANGUAGES } from "../components/LanguagePills";
 import { api, SpaceSummary } from "../api/client";
+import {
+  SUPPORTED_LANGUAGES as UI_SUPPORTED_LANGUAGES,
+  DEFAULT_LANGUAGE,
+  type LanguageCode,
+} from "../i18n/languages";
 
 const LANGUAGE_OPTIONS = [
   { label: "Auto-detect (all supported languages)", value: "auto" },
@@ -54,6 +61,7 @@ function SupportedLanguageBadges() {
 // Small info icon that reveals help text on hover/click. Use next to a field
 // label to give guidance without cluttering the form.
 function InfoTooltip({ content }: { content: React.ReactNode }) {
+  const { t } = useTranslation();
   return (
     <Popover
       dismissButton={false}
@@ -62,7 +70,7 @@ function InfoTooltip({ content }: { content: React.ReactNode }) {
       triggerType="custom"
       content={content}
     >
-      <span style={{ cursor: "help", color: "#5f6b7a" }} aria-label="More information">
+      <span style={{ cursor: "help", color: "#5f6b7a" }} aria-label={t("common.moreInformation")}>
         <Icon name="status-info" size="small" />
       </span>
     </Popover>
@@ -79,9 +87,10 @@ function LabelWithInfo({
   optional?: boolean;
   info: React.ReactNode;
 }) {
+  const { t } = useTranslation();
   return (
     <span>
-      {label} {optional && <i>- optional</i>} <InfoTooltip content={info} />
+      {label} {optional && <i>{t("common.optional")}</i>} <InfoTooltip content={info} />
     </span>
   );
 }
@@ -108,16 +117,16 @@ function hostInAllowlist(host: string, hosts: string[]): boolean {
 }
 
 // Turn the server's raw allowlist/SSRF rejection into a user-facing message.
-function friendlyGitError(msg: string, hosts: string[] | null): string {
-  const allowed = hosts && hosts.length ? ` Allowed hosts: ${hosts.join(", ")}.` : "";
+function friendlyGitError(msg: string, hosts: string[] | null, t: TFunction): string {
+  const allowed = hosts && hosts.length ? ` ${t("createSpace.allowedHosts", { hosts: hosts.join(", ") })}` : "";
   if (/No Git hosts are permitted/i.test(msg)) {
-    return "Repository analysis by URL is disabled on this instance. Ask your administrator to configure the allowed Git hosts, or upload a zip instead.";
+    return t("createSpace.errUrlDisabled");
   }
   if (/allowed Git hosts list/i.test(msg)) {
-    return `This Git host isn't permitted on this instance.${allowed}`;
+    return `${t("createSpace.errHostNotPermitted")}${allowed}`;
   }
   if (/cloud metadata service|loopback, link-local/i.test(msg)) {
-    return "That URL points at an internal address and can't be analyzed.";
+    return t("createSpace.errInternalAddress");
   }
   return msg;
 }
@@ -235,19 +244,25 @@ function formatSpaceDate(iso?: string): string {
 
 // Status as a Cloudscape StatusIndicator, consistent with the Spaces list.
 function DuplicateStatus({ status }: { status?: string }) {
-  if (status === "READY") return <StatusIndicator type="success">Ready</StatusIndicator>;
-  if (status === "FAILED") return <StatusIndicator type="error">Failed</StatusIndicator>;
-  if (status === "REFRESH_FAILED") return <StatusIndicator type="error">Refresh failed</StatusIndicator>;
+  const { t } = useTranslation();
+  if (status === "READY") return <StatusIndicator type="success">{t("common.statusReady")}</StatusIndicator>;
+  if (status === "FAILED") return <StatusIndicator type="error">{t("common.statusFailed")}</StatusIndicator>;
+  if (status === "REFRESH_FAILED") return <StatusIndicator type="error">{t("createSpace.statusRefreshFailed")}</StatusIndicator>;
   if (["ANALYZING", "SUBMITTED", "SUMMARIZING", "REFRESHING"].includes(status ?? "")) {
     const label =
-      status === "SUMMARIZING" ? "Summarizing" : status === "REFRESHING" ? "Refreshing" : "Analyzing";
+      status === "SUMMARIZING"
+        ? t("common.statusSummarizing")
+        : status === "REFRESHING"
+          ? t("common.statusRefreshing")
+          : t("common.statusAnalyzing");
     return <StatusIndicator type="in-progress">{label}</StatusIndicator>;
   }
-  return <StatusIndicator type="loading">{status ?? "Unknown"}</StatusIndicator>;
+  return <StatusIndicator type="loading">{status ?? t("createSpace.statusUnknown")}</StatusIndicator>;
 }
 
 export default function CreateSpace() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
 
   // Source type
   const [sourceType, setSourceType] = useState<SourceType>("git");
@@ -273,6 +288,15 @@ export default function CreateSpace() {
   // Shared fields
   const [language, setLanguage] = useState(LANGUAGE_OPTIONS[0]);
   const [summarize] = useState(true);
+  // Output language for the generated overview/analysis. Always starts at the
+  // default language, independent of the current UI language.
+  const outputLanguageOptions = UI_SUPPORTED_LANGUAGES.map((l) => ({
+    label: l.displayName,
+    value: l.languageCode as LanguageCode,
+  }));
+  const [outputLanguage, setOutputLanguage] = useState(
+    () => outputLanguageOptions.find((o) => o.value === DEFAULT_LANGUAGE) ?? outputLanguageOptions[0]
+  );
   const [omitLowBusinessRelevance, setOmitLowBusinessRelevance] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   // Pre-submit duplicate re-check (drives the submit button spinner so the
@@ -357,6 +381,8 @@ export default function CreateSpace() {
         space_name: gitSpaceName.trim() || undefined,
         summarize,
         omit_low_business_relevance: omitLowBusinessRelevance,
+        overview_language: outputLanguage.value,
+        analysis_language: outputLanguage.value,
       });
       // Keep the shared list current so a back-to-back second create (and other
       // pages) immediately see this new space.
@@ -367,7 +393,7 @@ export default function CreateSpace() {
       setFlash([
         {
           type: "error",
-          content: `Failed to start analysis: ${friendlyGitError(e.message, allowedHosts)}`,
+          content: `${t("createSpace.failedToStart")} ${friendlyGitError(e.message, allowedHosts, t)}`,
           dismissible: true,
           onDismiss: () => setFlash([]),
         },
@@ -422,7 +448,7 @@ export default function CreateSpace() {
       setBranchOptions([]);
       setLoadedBranchesFor(null);
       setBranchesError(
-        `Couldn't load branches: ${friendlyGitError(e.message, allowedHosts)} You can still type a branch name.`
+        `${t("createSpace.branchLoadFailed")} ${friendlyGitError(e.message, allowedHosts, t)} ${t("createSpace.branchTypeManually")}`
       );
     } finally {
       setBranchesLoading(false);
@@ -452,6 +478,8 @@ export default function CreateSpace() {
         space_name: spaceName,
         summarize,
         omit_low_business_relevance: omitLowBusinessRelevance,
+        overview_language: outputLanguage.value,
+        analysis_language: outputLanguage.value,
       });
       setUploadProgress(100);
       navigate(`/spaces/${space_id}`);
@@ -459,7 +487,7 @@ export default function CreateSpace() {
       setFlash([
         {
           type: "error",
-          content: `Failed to upload and analyze: ${e.message}`,
+          content: `${t("createSpace.failedToUpload")} ${e.message}`,
           dismissible: true,
           onDismiss: () => setFlash([]),
         },
@@ -519,7 +547,7 @@ export default function CreateSpace() {
         setFlash([
           {
             type: "error",
-            content: "Please select a .zip file",
+            content: t("createSpace.selectZip"),
             dismissible: true,
             onDismiss: () => setFlash([]),
           },
@@ -530,7 +558,7 @@ export default function CreateSpace() {
         setFlash([
           {
             type: "error",
-            content: "File size must be under 500 MB",
+            content: t("createSpace.fileTooLarge"),
             dismissible: true,
             onDismiss: () => setFlash([]),
           },
@@ -545,9 +573,9 @@ export default function CreateSpace() {
     <SpaceBetween size="l">
       <BreadcrumbGroup
         items={[
-          { text: "CodeKB", href: "/" },
-          { text: "Spaces", href: "/spaces" },
-          { text: "New space", href: "/create" },
+          { text: t("common.breadcrumbRoot"), href: "/" },
+          { text: t("nav.spaces"), href: "/spaces" },
+          { text: t("createSpace.newSpace"), href: "/create" },
         ]}
         onFollow={(e) => {
           e.preventDefault();
@@ -559,7 +587,7 @@ export default function CreateSpace() {
       <Modal
         visible={duplicateModalVisible}
         onDismiss={() => setDuplicateModalVisible(false)}
-        header="This repository looks already indexed"
+        header={t("createSpace.dupHeader")}
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
@@ -573,10 +601,10 @@ export default function CreateSpace() {
                   createGitSpace();
                 }}
               >
-                Create a new space anyway
+                {t("createSpace.dupCreateAnyway")}
               </Button>
               <Button variant="primary" onClick={() => setDuplicateModalVisible(false)}>
-                Cancel
+                {t("common.cancel")}
               </Button>
             </SpaceBetween>
           </Box>
@@ -585,10 +613,9 @@ export default function CreateSpace() {
         <SpaceBetween size="m">
           <Box variant="p">
             {duplicateMatches.length === 1
-              ? "A space for this repository already exists."
-              : `${duplicateMatches.length} spaces for this repository already exist.`}{" "}
-            Open one to reuse it (refresh it for the latest code), or create a
-            separate new space.
+              ? t("createSpace.dupOne")
+              : t("createSpace.dupMany", { count: duplicateMatches.length })}{" "}
+            {t("createSpace.dupHint")}
           </Box>
           <Box variant="small">{duplicateMatches[0]?.git_url}</Box>
           <SpaceBetween size="xs">
@@ -618,11 +645,10 @@ export default function CreateSpace() {
       </Modal>
 
       {infraReady === false && (
-        <Alert type="warning" header="Infrastructure not ready">
-          S3 buckets and vector index must be provisioned before creating a space.
-          Go to the{" "}
-          <Link onFollow={(e) => { e.preventDefault(); navigate("/settings"); }}>Settings</Link>
-          {" "}page to set up infrastructure.
+        <Alert type="warning" header={t("createSpace.infraHeader")}>
+          {t("createSpace.infraPrefix")}{" "}
+          <Link onFollow={(e) => { e.preventDefault(); navigate("/settings"); }}>{t("nav.settings")}</Link>
+          {" "}{t("createSpace.infraSuffix")}
         </Alert>
       )}
 
@@ -630,18 +656,18 @@ export default function CreateSpace() {
         header={
           <Header
             variant="h1"
-            description="A CodeKB space is a self-contained knowledge base built from source code. Provide a Git repository URL or upload a zip of your source directory."
+            description={t("createSpace.pageDescription")}
           >
-            New space
+            {t("createSpace.newSpace")}
           </Header>
         }
         actions={
           <SpaceBetween direction="horizontal" size="xs">
             <Button variant="link" onClick={() => navigate("/spaces")}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" loading={submitting || checkingDuplicates} disabled={!isValid || infraReady === false} onClick={handleSubmit}>
-              {sourceType === "upload" ? "Upload & analyze" : "Start analysis"}
+              {sourceType === "upload" ? t("createSpace.uploadAndAnalyze") : t("createSpace.startAnalysis")}
             </Button>
           </SpaceBetween>
         }
@@ -650,8 +676,8 @@ export default function CreateSpace() {
           {/* Source type selector */}
           <Container
             header={
-              <Header variant="h2" description="Choose where CodeKB should read your source code from.">
-                Source
+              <Header variant="h2" description={t("createSpace.sourceDescription")}>
+                {t("createSpace.sourceHeader")}
               </Header>
             }
           >
@@ -664,15 +690,15 @@ export default function CreateSpace() {
                 items={[
                   {
                     value: "git",
-                    label: "Git repository",
-                    description: "Clone from a Git URL accessible by CodeKB",
+                    label: t("createSpace.tileGitLabel"),
+                    description: t("createSpace.tileGitDescription"),
                   },
                   {
                     value: "upload",
-                    label: "Upload zip",
+                    label: t("createSpace.tileUploadLabel"),
                     description: zipUploadEnabled
-                      ? "Upload a zipped source directory from your machine"
-                      : "Upload a zipped source directory from your machine (disabled on this instance)",
+                      ? t("createSpace.tileUploadDescription")
+                      : t("createSpace.tileUploadDescriptionDisabled"),
                     disabled: !zipUploadEnabled,
                   },
                 ]}
@@ -681,87 +707,74 @@ export default function CreateSpace() {
               {sourceType === "git" && (
                 <SpaceBetween size="l">
                   {gitAnalysisDisabled && (
-                    <Alert type="warning" header="Repository analysis by URL is disabled">
-                      No Git hosts are configured on this instance, so CodeKB can't
-                      clone from a URL. You can still upload a zip of your source
-                      (choose "Upload zip" above). To enable URL analysis, an
-                      administrator must set the allowed Git hosts.
+                    <Alert type="warning" header={t("createSpace.urlDisabledHeader")}>
+                      {t("createSpace.urlDisabledBody")}
                     </Alert>
                   )}
 
                   {connectionsEnabled && hasConnections === false && (
-                    <Alert type="warning" header="Only public repositories can be indexed">
-                      You haven't connected any git credentials, so CodeKB can only clone
-                      public repositories. To index a private repository, add a token on
-                      the{" "}
+                    <Alert type="warning" header={t("createSpace.publicOnlyHeader")}>
+                      {t("createSpace.publicOnlyPrefix")}{" "}
                       <Link onFollow={(e) => { e.preventDefault(); navigate("/git-creds"); }}>
-                        Git credentials
+                        {t("createSpace.gitCredentialsLink")}
                       </Link>{" "}
-                      page, then come back here. If a private repo fails with an
-                      expired-token error, reconnect your token there.
+                      {t("createSpace.publicOnlySuffix")}
                     </Alert>
                   )}
 
                   <Alert type="info">
                     <SpaceBetween size="xs">
-                      <span>CodeKB can analyze these languages:</span>
+                      <span>{t("createSpace.analyzeLanguages")}</span>
                       <SupportedLanguageBadges />
-                      <span>
-                        Files in other languages are skipped. If none of the
-                        files are in a supported language, there's nothing to
-                        analyze.
-                      </span>
+                      <span>{t("createSpace.otherLanguagesSkipped")}</span>
                     </SpaceBetween>
                   </Alert>
 
                   <FormField
                     label={
                       <LabelWithInfo
-                        label="Space name"
-                        info="Filled in from the repository name as soon as you enter a URL, so the same repository always gets the same name. Type over it to use your own, or clear the field to go back to the default."
+                        label={t("createSpace.spaceNameLabel")}
+                        info={t("createSpace.gitSpaceNameInfo")}
                       />
                     }
-                    description="Defaults to the repository name. Edit it if you need a different name."
+                    description={t("createSpace.gitSpaceNameDescription")}
                     constraintText={
                       gitSpaceNameEdited
-                        ? "Using your name instead of the repository default. Clear the field to restore the default."
-                        : "Set automatically from the repository URL."
+                        ? t("createSpace.gitSpaceNameEdited")
+                        : t("createSpace.gitSpaceNameAuto")
                     }
                   >
                     <Input
                       value={gitSpaceName}
                       onChange={({ detail }) => handleGitSpaceNameChange(detail.value)}
-                      placeholder="Enter a repository URL below"
+                      placeholder={t("createSpace.gitSpaceNamePlaceholder")}
                     />
                   </FormField>
 
                   <FormField
                     label={
                       <LabelWithInfo
-                        label="Git repository URL"
+                        label={t("createSpace.gitUrlLabel")}
                         info={
                           <>
-                            The full clone URL of the repository, ending in
-                            <Box variant="code" display="inline"> .git</Box>.
-                            CodeKB must be able to reach it — public repos work
-                            out of the box; private repos need credentials
-                            configured on the service. Branches load
-                            automatically once you enter a valid URL.
+                            {t("createSpace.gitUrlInfoPrefix")}
+                            <Box variant="code" display="inline"> .git</Box>
+                            {t("createSpace.gitUrlInfoSuffix")}
                           </>
                         }
                       />
                     }
-                    description="HTTPS or SSH URL of the repository to analyze"
+                    description={t("createSpace.gitUrlDescription")}
                     constraintText={
                       allowedHosts && allowedHosts.length > 0
-                        ? `This instance can analyze repositories from: ${allowedHosts.join(", ")}. Must be reachable from the CodeKB service.`
-                        : "Example: https://github.com/org/repo.git — must be reachable from the CodeKB service"
+                        ? t("createSpace.gitUrlConstraintHosts", { hosts: allowedHosts.join(", ") })
+                        : t("createSpace.gitUrlConstraintDefault")
                     }
                     errorText={
                       gitUrlHasCredentials
-                        ? "Remove the username or token from the URL. Enter the plain clone URL and save a git credential on the Git credentials page instead."
+                        ? t("createSpace.gitUrlErrCredentials")
                         : hostNotAllowed
-                          ? `"${typedHost}" isn't permitted on this instance. Allowed hosts: ${allowedHosts!.join(", ")}.`
+                          ? t("createSpace.gitUrlErrHost", { host: typedHost, hosts: allowedHosts!.join(", ") })
                           : undefined
                     }
                   >
@@ -777,25 +790,17 @@ export default function CreateSpace() {
                   <FormField
                     label={
                       <LabelWithInfo
-                        label="Branch"
+                        label={t("createSpace.branchLabel")}
                         optional
-                        info={
-                          <>
-                            Pick a branch or tag from the list — it's loaded
-                            directly from the repository, so you don't have to
-                            type it. Leave it blank to analyze the repository's
-                            default branch. It must be a branch or tag name; a
-                            commit SHA won't work.
-                          </>
-                        }
+                        info={t("createSpace.branchInfo")}
                       />
                     }
-                    description="Branch or tag to analyze. Leave blank to use the repository's default branch."
-                    constraintText="Tip: pick from the list to avoid typos."
+                    description={t("createSpace.branchDescription")}
+                    constraintText={t("createSpace.branchConstraint")}
                     errorText={
                       branchesError ??
                       (showBranchMismatchWarning
-                        ? `"${trimmedBranch}" isn't a branch or tag in this repository — check the name, or pick one from the list. A commit SHA won't work.`
+                        ? t("createSpace.branchMismatch", { branch: trimmedBranch })
                         : undefined)
                     }
                   >
@@ -805,15 +810,15 @@ export default function CreateSpace() {
                       onFocus={() => fetchBranches()}
                       options={branchOptions}
                       statusType={branchesLoading ? "loading" : "finished"}
-                      loadingText="Loading branches…"
+                      loadingText={t("createSpace.branchesLoading")}
                       empty={
                         loadedBranchesFor
-                          ? "No branches found"
-                          : "Enter a repository URL to load branches"
+                          ? t("createSpace.branchesNone")
+                          : t("createSpace.branchesEnterUrl")
                       }
-                      enteredTextLabel={(v) => `Use: ${v}`}
-                      placeholder="Default branch"
-                      ariaLabel="Branch or tag"
+                      enteredTextLabel={(v) => t("createSpace.branchUse", { value: v })}
+                      placeholder={t("createSpace.branchPlaceholder")}
+                      ariaLabel={t("createSpace.branchAriaLabel")}
                     />
                   </FormField>
                 </SpaceBetween>
@@ -823,25 +828,21 @@ export default function CreateSpace() {
                 <SpaceBetween size="l">
                   <Alert type="info">
                     <SpaceBetween size="xs">
-                      <span>CodeKB can analyze these languages:</span>
+                      <span>{t("createSpace.analyzeLanguages")}</span>
                       <SupportedLanguageBadges />
-                      <span>
-                        Files in other languages are skipped. If none of the
-                        files are in a supported language, there's nothing to
-                        analyze.
-                      </span>
+                      <span>{t("createSpace.otherLanguagesSkipped")}</span>
                     </SpaceBetween>
                   </Alert>
 
                   <FormField
                     label={
                       <LabelWithInfo
-                        label="Space name"
-                        info="A friendly name shown in the spaces list. This is also used to generate the space identifier, so pick something recognizable."
+                        label={t("createSpace.spaceNameLabel")}
+                        info={t("createSpace.uploadSpaceNameInfo")}
                       />
                     }
-                    description="A human-readable name for this codebase"
-                    constraintText="Used to generate the space identifier"
+                    description={t("createSpace.uploadSpaceNameDescription")}
+                    constraintText={t("createSpace.uploadSpaceNameConstraint")}
                   >
                     <Input
                       value={spaceName}
@@ -853,12 +854,12 @@ export default function CreateSpace() {
                   <FormField
                     label={
                       <LabelWithInfo
-                        label="Source zip file"
-                        info="Zip the source directory itself (not a folder containing unrelated files). CodeKB scans the extracted contents for supported source files. Build artifacts, dependencies, and binaries are ignored."
+                        label={t("createSpace.zipLabel")}
+                        info={t("createSpace.zipInfo")}
                       />
                     }
-                    description="Zip your source code directory and upload it here"
-                    constraintText="Max 500 MB. Must be a .zip file."
+                    description={t("createSpace.zipDescription")}
+                    constraintText={t("createSpace.zipConstraint")}
                   >
                     <input
                       type="file"
@@ -880,15 +881,15 @@ export default function CreateSpace() {
                   {uploadProgress !== null && (
                     <ProgressBar
                       value={uploadProgress}
-                      label="Uploading source code"
+                      label={t("createSpace.uploadingLabel")}
                       description={
                         uploadProgress < 30
-                          ? "Preparing upload..."
+                          ? t("createSpace.progressPreparing")
                           : uploadProgress < 70
-                          ? "Uploading to S3..."
+                          ? t("createSpace.progressUploading")
                           : uploadProgress < 100
-                          ? "Starting analysis..."
-                          : "Done"
+                          ? t("createSpace.progressStarting")
+                          : t("createSpace.progressDone")
                       }
                     />
                   )}
@@ -899,10 +900,10 @@ export default function CreateSpace() {
 
           <Container
             header={
-              <Header variant="h2" description="Choose how much AI enrichment CodeKB should do after parsing.">
+              <Header variant="h2" description={t("createSpace.optionsDescription")}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
-                  <span>Analysis options</span>
-                  <Badge color="blue">Experimental</Badge>
+                  <span>{t("createSpace.optionsHeader")}</span>
+                  <Badge color="blue">{t("createSpace.experimental")}</Badge>
                 </span>
               </Header>
             }
@@ -911,12 +912,10 @@ export default function CreateSpace() {
               <FormField
                 description={
                   <>
-                    Business behaviour relevance estimates how likely a component is to represent
-                    product or workflow behaviour rather than plumbing, helpers, or framework glue.
-                    For the full scoring model, see the{" "}
+                    {t("createSpace.relevancePrefix")}{" "}
                     <Link onFollow={(e) => { e.preventDefault(); navigate("/docs#business-relevance"); }}>
-                      documentation
-                    </Link>.
+                      {t("createSpace.documentationLink")}
+                    </Link>{t("createSpace.relevanceSuffix")}
                   </>
                 }
               >
@@ -924,8 +923,24 @@ export default function CreateSpace() {
                   checked={omitLowBusinessRelevance}
                   onChange={({ detail }) => setOmitLowBusinessRelevance(detail.checked)}
                 >
-                  Omit low business relevance components from AI summarization
+                  {t("createSpace.omitToggle")}
                 </Toggle>
+              </FormField>
+              <FormField
+                label={t("spaceForm.outputLanguageLabel")}
+                description={t("spaceForm.outputLanguageDescription")}
+              >
+                <Select
+                  selectedOption={outputLanguage}
+                  onChange={({ detail }) =>
+                    setOutputLanguage(
+                      outputLanguageOptions.find((o) => o.value === detail.selectedOption.value) ??
+                        outputLanguageOptions[0]
+                    )
+                  }
+                  options={outputLanguageOptions}
+                  ariaLabel={t("spaceForm.outputLanguageLabel")}
+                />
               </FormField>
             </SpaceBetween>
           </Container>

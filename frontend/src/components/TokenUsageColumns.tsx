@@ -6,15 +6,17 @@
  * before that breakdown existed only have `by_model`, so they show the model
  * and "—" for the settings, which weren't recorded.
  */
+import i18n from "i18next";
+import { useTranslation } from "react-i18next";
 import Box from "@cloudscape-design/components/box";
 import { TokenUsage } from "../api/client";
 
-/** Display names for workloads, shared with the Settings page. */
+/** Translation keys for workload display names, shared with the Settings page. */
 export const WORKLOAD_LABELS: Record<string, string> = {
-  summarization: "Function descriptions",
-  business_context: "Business vocabulary",
-  overview: "Space and Hyperspace overviews",
-  chat: "Agent Hopper chat",
+  summarization: "components.workloadSummarization",
+  business_context: "components.workloadBusinessContext",
+  overview: "components.workloadOverview",
+  chat: "components.workloadChat",
 };
 
 /** One table row's worth of an operation: one workload, or the whole legacy record. */
@@ -80,8 +82,9 @@ export function ModelCell({
   noCalls: boolean;
   region?: string;
 }) {
+  const { t } = useTranslation();
   // No calls: say so once, here, instead of three ambiguous dashes.
-  if (noCalls) return <Box color="text-status-inactive">No model calls</Box>;
+  if (noCalls) return <Box color="text-status-inactive">{t("components.noModelCalls")}</Box>;
   if (models.length === 0) return <Box color="text-status-inactive">—</Box>;
   return (
     <div>
@@ -118,26 +121,28 @@ export function regionDisplay(
  * Empty when the operation made no calls; the Model cell says so.
  */
 export function SettingCell({ value, noCalls }: { value?: string | null; noCalls: boolean }) {
+  const { t } = useTranslation();
   if (noCalls) return null;
   if (value === undefined) {
     return (
-      <span title="Recorded before CodeKB tracked this setting">
+      <span title={t("components.settingNotRecorded")}>
         <Box color="text-status-inactive">—</Box>
       </span>
     );
   }
-  if (value === null) return <Box color="text-status-inactive">Not set</Box>;
+  if (value === null) return <Box color="text-status-inactive">{t("components.notSet")}</Box>;
   return <Box variant="code">{value}</Box>;
 }
 
 /** Output tokens, with the share spent thinking when the model reported it. */
 export function OutputCell({ output, thinkingTokens }: { output: number; thinkingTokens: number }) {
+  const { t } = useTranslation();
   if (!thinkingTokens) return <>{output.toLocaleString()}</>;
   return (
     <div>
       {output.toLocaleString()}
       <Box variant="small" color="text-body-secondary">
-        {thinkingTokens.toLocaleString()} thinking
+        {t("components.thinkingTokens", { count: thinkingTokens.toLocaleString() })}
       </Box>
     </div>
   );
@@ -145,12 +150,13 @@ export function OutputCell({ output, thinkingTokens }: { output: number; thinkin
 
 /** Operation label, plus the workload on a second line when the row is one workload. */
 export function OperationCell({ label, workload }: { label: string; workload?: string }) {
+  const { t } = useTranslation();
   return (
     <div>
       {label}
       {workload && (
         <Box variant="small" color="text-body-secondary">
-          {WORKLOAD_LABELS[workload] ?? workload}
+          {WORKLOAD_LABELS[workload] ? t(WORKLOAD_LABELS[workload]) : workload}
         </Box>
       )}
     </div>
@@ -168,6 +174,11 @@ export function totalsText(rows: Array<{ input: number; output: number; total: n
     }),
     { input: 0, output: 0, total: 0, thinking: 0 },
   );
-  const thinking = g.thinking ? `, ${g.thinking.toLocaleString()} of it thinking` : "";
-  return `Total: ${g.input.toLocaleString()} in / ${g.output.toLocaleString()} out${thinking} (${g.total.toLocaleString()} tokens)`;
+  const thinking = g.thinking ? i18n.t("components.totalsThinking", { count: g.thinking.toLocaleString() }) : "";
+  return i18n.t("components.totalsText", {
+    input: g.input.toLocaleString(),
+    output: g.output.toLocaleString(),
+    thinking,
+    total: g.total.toLocaleString(),
+  });
 }

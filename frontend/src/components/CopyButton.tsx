@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import Button from "@cloudscape-design/components/button";
 
 interface CopyButtonProps {
@@ -11,10 +12,12 @@ interface CopyButtonProps {
 export default function CopyButton({
   text,
   variant = "icon",
-  label = "Copy",
+  label,
   disabled = false,
 }: CopyButtonProps) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  const buttonLabel = label ?? t("common.copy");
 
   const handleCopy = useCallback(async () => {
     try {
@@ -43,9 +46,9 @@ export default function CopyButton({
         iconName={copied ? "status-positive" : "copy"}
         onClick={handleCopy}
         disabled={disabled}
-        ariaLabel={copied ? "Copied" : label}
+        ariaLabel={copied ? t("common.copied") : buttonLabel}
       >
-        {variant === "icon" ? undefined : copied ? "Copied" : label}
+        {variant === "icon" ? undefined : copied ? t("common.copied") : buttonLabel}
       </Button>
     </span>
   );

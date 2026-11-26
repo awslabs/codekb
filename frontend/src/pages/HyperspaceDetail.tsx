@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -47,23 +49,26 @@ const HS_DOC_ICONS: Record<string, string> = {
   space_interconnections: "share",
 };
 
-function staleReasonText(r: {
-  reason: string;
-  from_commit?: string;
-  to_commit?: string;
-}): string {
-  const short = (c?: string) => (c ? c.slice(0, 8) : "unknown");
+function staleReasonText(
+  r: {
+    reason: string;
+    from_commit?: string;
+    to_commit?: string;
+  },
+  t: TFunction,
+): string {
+  const short = (c?: string) => (c ? c.slice(0, 8) : t("hyperspaceDetail.staleUnknownCommit"));
   switch (r.reason) {
     case "code_changed":
-      return `code changed (${short(r.from_commit)} → ${short(r.to_commit)})`;
+      return t("hyperspaceDetail.staleCodeChanged", { from: short(r.from_commit), to: short(r.to_commit) });
     case "member_added":
-      return "added to the hyperspace after this overview was generated";
+      return t("hyperspaceDetail.staleMemberAdded");
     case "member_removed":
-      return "removed from the hyperspace after this overview was generated";
+      return t("hyperspaceDetail.staleMemberRemoved");
     case "space_missing":
-      return "space no longer exists";
+      return t("hyperspaceDetail.staleSpaceMissing");
     case "not_ready":
-      return "currently being (re)analyzed";
+      return t("hyperspaceDetail.staleNotReady");
     default:
       return r.reason;
   }
@@ -104,6 +109,7 @@ function HyperspaceTokenConsumption({
   model?: { model_id?: string; region?: string };
   memberCount: number;
 }) {
+  const { t } = useTranslation();
   const rows = (usage?.recent ?? [])
     .flatMap((entry, i) =>
       usageParts(entry).map((part, j) => ({
@@ -121,15 +127,13 @@ function HyperspaceTokenConsumption({
   return (
     <ExpandableSection
       variant="container"
-      headerText="Token consumption"
+      headerText={t("hyperspaceDetail.tokenHeader")}
       headerCounter={`(${rows.length})`}
-      headerDescription="Bedrock tokens for the hyperspace synthesis only (inference). Costs are not computed — use the AWS Bedrock pricing page to estimate."
+      headerDescription={t("hyperspaceDetail.tokenDescription")}
     >
       <SpaceBetween size="s">
         <Alert type="info">
-          This counts only the hyperspace “summary of summaries” synthesis. Generating or
-          refreshing the {memberCount} member space{memberCount === 1 ? "" : "s"}’ Space
-          Overviews is measured on each member space — see the individual spaces for those tokens.
+          {t("hyperspaceDetail.tokenInfo", { count: memberCount })}
         </Alert>
         <div
           style={{
@@ -143,7 +147,7 @@ function HyperspaceTokenConsumption({
           {/* The model is per row: the configured model can change between runs. */}
           {regions.header ? (
             <Box variant="small" color="text-body-secondary">
-              Region{" "}
+              {t("hyperspaceDetail.region")}{" "}
               <Box variant="code" display="inline">
                 {regions.header}
               </Box>
@@ -153,7 +157,7 @@ function HyperspaceTokenConsumption({
           )}
           {pricingUrl && (
             <Button href={pricingUrl} target="_blank" iconAlign="right" iconName="external">
-              AWS Bedrock pricing
+              {t("hyperspaceDetail.bedrockPricing")}
             </Button>
           )}
         </div>
@@ -163,13 +167,13 @@ function HyperspaceTokenConsumption({
           columnDefinitions={[
             {
               id: "operation",
-              header: "Operation",
-              cell: (r) => (r.detail ? `Hyperspace synthesis (${r.detail})` : "Hyperspace synthesis"),
+              header: t("hyperspaceDetail.colOperation"),
+              cell: (r) => (r.detail ? t("hyperspaceDetail.operationWithDetail", { detail: r.detail }) : t("hyperspaceDetail.operation")),
             },
-            { id: "when", header: "When", cell: (r) => fmtWhenUtc(r.when) },
+            { id: "when", header: t("hyperspaceDetail.colWhen"), cell: (r) => fmtWhenUtc(r.when) },
             {
               id: "model",
-              header: "Model",
+              header: t("hyperspaceDetail.colModel"),
               cell: (r) => (
                 <ModelCell
                   models={r.models}
@@ -178,15 +182,15 @@ function HyperspaceTokenConsumption({
                 />
               ),
             },
-            { id: "thinking", header: "Thinking", cell: (r) => <SettingCell value={r.thinking} noCalls={r.noCalls} /> },
-            { id: "effort", header: "Effort", cell: (r) => <SettingCell value={r.effort} noCalls={r.noCalls} /> },
-            { id: "input", header: "Input", cell: (r) => r.input.toLocaleString() },
+            { id: "thinking", header: t("hyperspaceDetail.colThinking"), cell: (r) => <SettingCell value={r.thinking} noCalls={r.noCalls} /> },
+            { id: "effort", header: t("hyperspaceDetail.colEffort"), cell: (r) => <SettingCell value={r.effort} noCalls={r.noCalls} /> },
+            { id: "input", header: t("hyperspaceDetail.colInput"), cell: (r) => r.input.toLocaleString() },
             {
               id: "output",
-              header: "Output",
+              header: t("hyperspaceDetail.colOutput"),
               cell: (r) => <OutputCell output={r.output} thinkingTokens={r.thinkingTokens} />,
             },
-            { id: "total", header: "Total", cell: (r) => r.total.toLocaleString() },
+            { id: "total", header: t("hyperspaceDetail.colTotal"), cell: (r) => r.total.toLocaleString() },
           ]}
           footer={
             <Box textAlign="right" fontWeight="bold">
@@ -211,7 +215,7 @@ interface MemberRow {
 
 const MIN_SPACES = 1;
 
-function statusIndicator(status: string): JSX.Element {
+function statusIndicator(status: string, t: TFunction): JSX.Element {
   const map: Record<string, StatusIndicatorProps.Type> = {
     READY: "success",
     FAILED: "error",
@@ -223,16 +227,24 @@ function statusIndicator(status: string): JSX.Element {
     REFRESHING: "in-progress",
   };
   const type = map[status] ?? "pending";
-  const label =
-    status === "MISSING"
-      ? "Deleted"
-      : status === "REFRESH_FAILED"
-      ? "Refresh failed"
-      : status.charAt(0) + status.slice(1).toLowerCase();
+  const labelKeys: Record<string, string> = {
+    MISSING: "common.statusDeleted",
+    READY: "common.statusReady",
+    FAILED: "common.statusFailed",
+    REFRESH_FAILED: "hyperspaceDetail.statusRefreshFailed",
+    ANALYZING: "common.statusAnalyzing",
+    SUBMITTED: "hyperspaceDetail.statusSubmitted",
+    SUMMARIZING: "common.statusSummarizing",
+    REFRESHING: "common.statusRefreshing",
+  };
+  const label = labelKeys[status]
+    ? t(labelKeys[status])
+    : status.charAt(0) + status.slice(1).toLowerCase();
   return <StatusIndicator type={type}>{label}</StatusIndicator>;
 }
 
 export default function HyperspaceDetail() {
+  const { t } = useTranslation();
   const { hyperspaceId } = useParams<{ hyperspaceId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -388,7 +400,7 @@ export default function HyperspaceDetail() {
       setFlash([
         {
           type: "success",
-          content: "Hyperspace updated.",
+          content: t("hyperspaceDetail.flashUpdated"),
           dismissible: true,
           onDismiss: () => setFlash([]),
         },
@@ -396,7 +408,7 @@ export default function HyperspaceDetail() {
       await queryClient.invalidateQueries({ queryKey: ["hyperspace", hyperspaceId] });
       queryClient.invalidateQueries({ queryKey: ["hyperspaces"] });
     } catch (e: any) {
-      showError(e.message || "Failed to update hyperspace");
+      showError(e.message || t("hyperspaceDetail.updateFailed"));
     } finally {
       setSaving(false);
     }
@@ -416,7 +428,7 @@ export default function HyperspaceDetail() {
       queryClient.invalidateQueries({ queryKey: ["hyperspaces"] });
       navigate("/hyperspaces");
     } catch (e: any) {
-      showError(`Delete failed: ${e.message}`);
+      showError(t("hyperspaceDetail.deleteFailed", { message: e.message }));
       setDeleting(false);
     }
   };
@@ -433,7 +445,7 @@ export default function HyperspaceDetail() {
   // The docs carry no top-level H1 (stripped defensively), so headings don't double up.
   const combinedOverviewMd = allOverviewDocsLoaded
     ? [
-        `# ${hyperspace?.name ?? hyperspaceId} — Hyperspace Overview`,
+        t("hyperspaceDetail.overviewTitle", { name: hyperspace?.name ?? hyperspaceId }),
         "",
         ...overviewDocDefs.flatMap((d) => [
           `## ${d.title}`,
@@ -467,7 +479,7 @@ export default function HyperspaceDetail() {
       if (e instanceof ApiError && e.isAuthz) {
         showError(e.displayMessage);
       } else {
-        showError(`Failed to load overview document: ${e.message}`);
+        showError(t("hyperspaceDetail.loadDocFailed", { message: e.message }));
       }
     } finally {
       setOverviewLoading((prev) => ({ ...prev, [docKey]: false }));
@@ -487,7 +499,7 @@ export default function HyperspaceDetail() {
       setActiveOverviewDoc(null);
       await queryClient.invalidateQueries({ queryKey: ["hyperspace", hyperspaceId] });
     } catch (e: any) {
-      showError(`Failed to start overview generation: ${e.message}`);
+      showError(t("hyperspaceDetail.startFailed", { message: e.message }));
     } finally {
       setOverviewSubmitting(false);
     }
@@ -527,8 +539,8 @@ export default function HyperspaceDetail() {
   const breadcrumbs = (
     <BreadcrumbGroup
       items={[
-        { text: "CodeKB", href: "/" },
-        { text: "Hyperspaces", href: "/hyperspaces" },
+        { text: t("common.breadcrumbRoot"), href: "/" },
+        { text: t("nav.hyperspaces"), href: "/hyperspaces" },
         { text: hyperspace?.name ?? hyperspaceId ?? "", href: `/hyperspaces/${hyperspaceId}` },
       ]}
       onFollow={(e) => {
@@ -554,12 +566,12 @@ export default function HyperspaceDetail() {
       <SpaceBetween size="l">
         {breadcrumbs}
         <Box textAlign="center" padding="xxl">
-          <b>Hyperspace not found</b>
+          <b>{t("hyperspaceDetail.notFoundTitle")}</b>
           <Box variant="p" color="text-body-secondary" padding={{ top: "xs" }}>
-            {(hsErrorObj as Error)?.message || "It may have been deleted."}
+            {(hsErrorObj as Error)?.message || t("hyperspaceDetail.notFoundDefault")}
           </Box>
           <Box padding={{ top: "s" }}>
-            <Button onClick={() => navigate("/hyperspaces")}>Back to hyperspaces</Button>
+            <Button onClick={() => navigate("/hyperspaces")}>{t("hyperspaceDetail.backToHyperspaces")}</Button>
           </Box>
         </Box>
       </SpaceBetween>
@@ -579,8 +591,8 @@ export default function HyperspaceDetail() {
         variant="h1"
         actions={
           <SpaceBetween direction="horizontal" size="xs">
-            <Button onClick={() => navigate("/hyperspaces")}>Back to hyperspaces</Button>
-            <Button onClick={() => setDeleteVisible(true)}>Delete</Button>
+            <Button onClick={() => navigate("/hyperspaces")}>{t("hyperspaceDetail.backToHyperspaces")}</Button>
+            <Button onClick={() => setDeleteVisible(true)}>{t("hyperspaceDetail.delete")}</Button>
           </SpaceBetween>
         }
       >
@@ -588,32 +600,27 @@ export default function HyperspaceDetail() {
       </Header>
 
       {hyperspace.invalid && (
-        <Alert type="warning" header="This hyperspace references deleted spaces">
-          Remove the entries marked <b>Deleted</b> below and save to repair it.
-          A hyperspace needs at least {MIN_SPACES} valid space.
+        <Alert type="warning" header={t("hyperspaceDetail.invalidHeader")}>
+          {t("hyperspaceDetail.invalidBodyPrefix")}<b>{t("common.statusDeleted")}</b>{t("hyperspaceDetail.invalidBodySuffix", { min: MIN_SPACES })}
         </Alert>
       )}
 
       {inaccessibleIds.length > 0 && (
-        <Alert type="warning" header="You don't have access to every member space">
-          You can't read {inaccessibleIds.length} member space
-          {inaccessibleIds.length === 1 ? "" : "s"}: {inaccessibleIds.join(", ")}. Generating or
-          reading this hyperspace's overview, and running agent queries over it, require read
-          access to every member. Get read access to these git repositories, then make sure a
-          token for them is connected on the Git credentials page.
+        <Alert type="warning" header={t("hyperspaceDetail.noAccessHeader")}>
+          {t("hyperspaceDetail.noAccessBody", { count: inaccessibleIds.length, ids: inaccessibleIds.join(", ") })}
         </Alert>
       )}
 
-      <Container header={<Header variant="h2">Details</Header>}>
+      <Container header={<Header variant="h2">{t("hyperspaceDetail.detailsHeader")}</Header>}>
         <SpaceBetween size="l">
           <KeyValuePairs
             columns={3}
             items={[
-              { label: "Name", value: hyperspace.name },
-              { label: "Hyperspace ID", value: <Box variant="code">{hyperspace.hyperspace_id}</Box> },
-              { label: "Created by", value: hyperspace.created_by || "—" },
+              { label: t("hyperspaceDetail.detailName"), value: hyperspace.name },
+              { label: t("hyperspaceDetail.detailId"), value: <Box variant="code">{hyperspace.hyperspace_id}</Box> },
+              { label: t("hyperspaceDetail.detailCreatedBy"), value: hyperspace.created_by || "—" },
               {
-                label: "Last updated",
+                label: t("hyperspaceDetail.detailUpdated"),
                 value: hyperspace.updated_at
                   ? new Date(hyperspace.updated_at).toLocaleString(undefined, {
                       year: "numeric",
@@ -634,7 +641,7 @@ export default function HyperspaceDetail() {
         onChange={({ detail }) => setActiveTabId(detail.activeTabId)}
         tabs={[
           {
-            label: "Hyperspace Overview",
+            label: t("hyperspaceDetail.tabOverview"),
             id: "overview",
             content: (
               <SpaceBetween size="l">
@@ -643,12 +650,12 @@ export default function HyperspaceDetail() {
         <SpaceBetween size="l">
           <Header
             variant="h2"
-            description="A system-level view synthesized from the member spaces' Space Overviews. Cross-space connections are inferred from documentation, not a verified call graph — verify against source before relying on them."
+            description={t("hyperspaceDetail.overviewDescription")}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
                 <CopyButton
                   variant="normal"
-                  label="Copy as Markdown"
+                  label={t("hyperspaceDetail.copyMarkdown")}
                   text={combinedOverviewMd}
                   disabled={!allOverviewDocsLoaded || overviewGenerating}
                 />
@@ -658,25 +665,24 @@ export default function HyperspaceDetail() {
                   disabled={!overviewEnabled || overviewGenerating}
                   disabledReason={
                     !overviewEnabled
-                      ? "Overview generation is disabled on this instance."
+                      ? t("hyperspaceDetail.overviewDisabled")
                       : undefined
                   }
                   onClick={() => setOverviewConfirmVisible(true)}
                 >
-                  Regenerate
+                  {t("hyperspaceDetail.regenerate")}
                 </Button>
               </SpaceBetween>
             }
           >
-            Hyperspace Overview
+            {t("hyperspaceDetail.tabOverview")}
           </Header>
 
           {isStale && (
-            <Alert type="warning" header="Hyperspace overview is out of date">
+            <Alert type="warning" header={t("hyperspaceDetail.staleHeader")}>
               <SpaceBetween size="xs">
                 <span>
-                  These member spaces changed since this overview was generated. Regenerate to
-                  bring it up to date (member overviews are refreshed automatically as part of that).
+                  {t("hyperspaceDetail.staleBody")}
                 </span>
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
                   {staleReasons.map((r) => {
@@ -696,7 +702,7 @@ export default function HyperspaceDetail() {
                         ) : (
                           <b>{r.space_name || r.space_id}</b>
                         )}
-                        : {staleReasonText(r)}
+                        : {staleReasonText(r, t)}
                       </li>
                     );
                   })}
@@ -707,7 +713,7 @@ export default function HyperspaceDetail() {
 
           {overviewGenerating && (
             <StatusIndicator type="in-progress">
-              Regenerating system overview… existing documents are being rebuilt from scratch.
+              {t("hyperspaceDetail.regenerating")}
             </StatusIndicator>
           )}
 
@@ -721,7 +727,7 @@ export default function HyperspaceDetail() {
                   key={doc.key}
                   className="overview-card-clickable"
                   role="button"
-                  aria-label={`View ${doc.title}`}
+                  aria-label={t("hyperspaceDetail.viewDoc", { title: doc.title })}
                   title={doc.title}
                   tabIndex={0}
                   onClick={() => {
@@ -799,9 +805,9 @@ export default function HyperspaceDetail() {
               ) : (
                 <Box textAlign="center" padding="l">
                   <SpaceBetween size="s">
-                    <span>Failed to load this document.</span>
+                    <span>{t("hyperspaceDetail.docLoadFailed")}</span>
                     <Button iconName="refresh" onClick={() => loadOverviewDoc(activeOverviewDoc)}>
-                      Try again
+                      {t("hyperspaceDetail.tryAgain")}
                     </Button>
                   </SpaceBetween>
                 </Box>
@@ -814,7 +820,7 @@ export default function HyperspaceDetail() {
           header={
             <Header
               variant="h2"
-              description="Generates a system-level overview that synthesizes the member spaces' Space Overviews and infers how the spaces connect. To keep results accurate, this first ensures every member space has an up-to-date Space Overview — generating or regenerating as needed — which incurs Bedrock cost and can take significant time for large hyperspaces."
+              description={t("hyperspaceDetail.generateDescription")}
               actions={
                 !overviewGenerating ? (
                   <Button
@@ -824,17 +830,17 @@ export default function HyperspaceDetail() {
                     disabled={!overviewEnabled || overviewSubmitting}
                     disabledReason={
                       !overviewEnabled
-                        ? "Overview generation is disabled on this instance."
+                        ? t("hyperspaceDetail.overviewDisabled")
                         : undefined
                     }
                     onClick={() => setOverviewConfirmVisible(true)}
                   >
-                    Generate overview
+                    {t("hyperspaceDetail.generateOverview")}
                   </Button>
                 ) : undefined
               }
             >
-              Hyperspace Overview
+              {t("hyperspaceDetail.tabOverview")}
             </Header>
           }
         >
@@ -845,31 +851,27 @@ export default function HyperspaceDetail() {
                   const done = hyperspace.overview_done ?? 0;
                   const total = hyperspace.overview_total ?? 0;
                   if (total === 0 || done === 0)
-                    return "Ensuring member space overviews are up to date…";
-                  return `Generating… (step ${done} of ${total})`;
+                    return t("hyperspaceDetail.ensuring");
+                  return t("hyperspaceDetail.generatingStep", { done, total });
                 })()}
               </StatusIndicator>
               <ProgressBar
                 value={hyperspace.overview_percent ?? 0}
-                label="Overview generation"
+                label={t("hyperspaceDetail.progressLabel")}
                 variant="flash"
               />
               <Box color="text-body-secondary" fontSize="body-s">
-                Member space overviews are generated or refreshed first (when missing or
-                older than the latest code refresh), then the system overview is
-                synthesized from them.
+                {t("hyperspaceDetail.progressNote")}
               </Box>
             </SpaceBetween>
           ) : overviewFailed ? (
-            <Alert type="error" header="Overview generation failed">
+            <Alert type="error" header={t("hyperspaceDetail.failedHeader")}>
               {hyperspace.overview_error ||
-                "Generation failed. Ensure at least one member space has a generated Space Overview, then try again."}
+                t("hyperspaceDetail.failedDefault")}
             </Alert>
           ) : (
             <Box color="text-body-secondary">
-              No system overview yet. Generate one for a cross-space narrative and an
-              inferred map of how these spaces connect. CodeKB first ensures every member
-              space has an up-to-date Space Overview, then synthesizes the system view.
+              {t("hyperspaceDetail.noOverviewYet")}
             </Box>
           )}
         </Container>
@@ -886,7 +888,7 @@ export default function HyperspaceDetail() {
             ),
           },
           {
-            label: "Member spaces",
+            label: t("hyperspaceDetail.tabMembers"),
             id: "members",
             content: (
               <SpaceBetween size="l">
@@ -900,29 +902,29 @@ export default function HyperspaceDetail() {
         variant="container"
         empty={
           <Box textAlign="center" padding="m" color="inherit">
-            No spaces in this hyperspace yet. Add some below.
+            {t("hyperspaceDetail.membersEmpty")}
           </Box>
         }
         header={
           <Header
             counter={`(${memberRows.length})`}
-            description="Spaces currently grouped in this hyperspace"
+            description={t("hyperspaceDetail.membersDescription")}
             actions={
               <Button
                 disabled={memberSelection.length === 0}
                 onClick={() => removeMembers(memberSelection.map((m) => m.space_id))}
               >
-                Remove selected
+                {t("hyperspaceDetail.removeSelected")}
               </Button>
             }
           >
-            Members
+            {t("hyperspaceDetail.membersHeader")}
           </Header>
         }
         filter={
           <TextFilter
             filteringText={memberFilter}
-            filteringPlaceholder="Find members"
+            filteringPlaceholder={t("hyperspaceDetail.findMembersPlaceholder")}
             onChange={({ detail }) => {
               setMemberFilter(detail.filteringText);
               setMemberPage(1);
@@ -933,13 +935,14 @@ export default function HyperspaceDetail() {
           <Pagination
             currentPageIndex={memberPage}
             pagesCount={Math.max(1, Math.ceil(filteredMembers.length / pageSize))}
+            ariaLabels={{ nextPageLabel: t("hyperspaceDetail.pageNext"), previousPageLabel: t("hyperspaceDetail.pagePrevious"), pageLabel: (n) => t("hyperspaceDetail.pageLabel", { page: n }) }}
             onChange={({ detail }) => setMemberPage(detail.currentPageIndex)}
           />
         }
         columnDefinitions={[
           {
             id: "name",
-            header: "Name",
+            header: t("hyperspaceDetail.colName"),
             cell: (m) => {
               // Not a link when the space is gone or the caller can't read it —
               // following it would only land on a not-found / access-denied page.
@@ -965,23 +968,23 @@ export default function HyperspaceDetail() {
               );
             },
           },
-          { id: "status", header: "Status", cell: (m) => statusIndicator(m.status) },
+          { id: "status", header: t("hyperspaceDetail.colStatus"), cell: (m) => statusIndicator(m.status, t) },
           {
             id: "access",
-            header: "Access",
+            header: t("hyperspaceDetail.colAccess"),
             cell: (m) =>
               m.status === "MISSING" || m.status === "NOT_FOUND" ? (
                 "—"
               ) : inaccessible.has(m.space_id) ? (
-                <StatusIndicator type="warning">No access</StatusIndicator>
+                <StatusIndicator type="warning">{t("hyperspaceDetail.accessNo")}</StatusIndicator>
               ) : (
-                <StatusIndicator type="success">Access</StatusIndicator>
+                <StatusIndicator type="success">{t("hyperspaceDetail.accessYes")}</StatusIndicator>
               ),
           },
-          { id: "components", header: "Components", cell: (m) => m.component_count ?? "—" },
+          { id: "components", header: t("hyperspaceDetail.colComponents"), cell: (m) => m.component_count ?? "—" },
           {
             id: "languages",
-            header: "Languages",
+            header: t("hyperspaceDetail.colLanguages"),
             cell: (m) =>
               m.languages && m.languages.length > 0 ? (
                 <SpaceBetween direction="horizontal" size="xxs">
@@ -1000,7 +1003,7 @@ export default function HyperspaceDetail() {
             header: "",
             cell: (m) => (
               <Button variant="inline-link" onClick={() => removeMembers([m.space_id])}>
-                Remove
+                {t("hyperspaceDetail.remove")}
               </Button>
             ),
           },
@@ -1017,29 +1020,29 @@ export default function HyperspaceDetail() {
         variant="container"
         empty={
           <Box textAlign="center" padding="m" color="inherit">
-            No other indexed spaces available to add.
+            {t("hyperspaceDetail.availableEmpty")}
           </Box>
         }
         header={
           <Header
             counter={`(${availableSpaces.length})`}
-            description="Indexed spaces not yet in this hyperspace"
+            description={t("hyperspaceDetail.availableDescription")}
             actions={
               <Button
                 disabled={addSelection.length === 0}
                 onClick={() => addSpaces(addSelection)}
               >
-                Add selected
+                {t("hyperspaceDetail.addSelected")}
               </Button>
             }
           >
-            Add spaces
+            {t("hyperspaceDetail.addSpaces")}
           </Header>
         }
         filter={
           <TextFilter
             filteringText={addFilter}
-            filteringPlaceholder="Find spaces to add"
+            filteringPlaceholder={t("hyperspaceDetail.findToAddPlaceholder")}
             onChange={({ detail }) => {
               setAddFilter(detail.filteringText);
               setAddPage(1);
@@ -1050,13 +1053,14 @@ export default function HyperspaceDetail() {
           <Pagination
             currentPageIndex={addPage}
             pagesCount={Math.max(1, Math.ceil(filteredAvailable.length / pageSize))}
+            ariaLabels={{ nextPageLabel: t("hyperspaceDetail.pageNext"), previousPageLabel: t("hyperspaceDetail.pagePrevious"), pageLabel: (n) => t("hyperspaceDetail.pageLabel", { page: n }) }}
             onChange={({ detail }) => setAddPage(detail.currentPageIndex)}
           />
         }
         columnDefinitions={[
           {
             id: "name",
-            header: "Name",
+            header: t("hyperspaceDetail.colName"),
             cell: (s) => (
               <div>
                 <Box fontWeight="bold">{s.space_name || s.space_id}</Box>
@@ -1064,10 +1068,10 @@ export default function HyperspaceDetail() {
               </div>
             ),
           },
-          { id: "components", header: "Components", cell: (s) => s.component_count ?? "—" },
+          { id: "components", header: t("hyperspaceDetail.colComponents"), cell: (s) => s.component_count ?? "—" },
           {
             id: "languages",
-            header: "Languages",
+            header: t("hyperspaceDetail.colLanguages"),
             cell: (s) =>
               s.languages && s.languages.length > 0 ? (
                 <SpaceBetween direction="horizontal" size="xxs">
@@ -1086,7 +1090,7 @@ export default function HyperspaceDetail() {
             header: "",
             cell: (s) => (
               <Button variant="inline-link" onClick={() => addSpaces([s])}>
-                Add
+                {t("hyperspaceDetail.add")}
               </Button>
             ),
           },
@@ -1097,14 +1101,14 @@ export default function HyperspaceDetail() {
       <Box>
         <SpaceBetween direction="horizontal" size="xs">
           <Button variant="primary" loading={saving} disabled={!canSave} onClick={handleSave}>
-            Save changes
+            {t("hyperspaceDetail.saveChanges")}
           </Button>
           <Button disabled={!dirty || saving} onClick={handleReset}>
-            Discard changes
+            {t("hyperspaceDetail.discardChanges")}
           </Button>
           {dirty && memberIds.length < MIN_SPACES && (
             <Box color="text-status-error" padding={{ top: "xxs" }}>
-              A hyperspace needs at least {MIN_SPACES} space.
+              {t("hyperspaceDetail.minSpaces", { min: MIN_SPACES })}
             </Box>
           )}
         </SpaceBetween>
@@ -1118,38 +1122,37 @@ export default function HyperspaceDetail() {
       <Modal
         visible={deleteVisible}
         onDismiss={() => setDeleteVisible(false)}
-        header="Delete hyperspace"
+        header={t("hyperspaceDetail.deleteHeader")}
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button onClick={() => setDeleteVisible(false)}>Cancel</Button>
+              <Button onClick={() => setDeleteVisible(false)}>{t("common.cancel")}</Button>
               <Button variant="primary" loading={deleting} onClick={handleDelete}>
-                Delete
+                {t("hyperspaceDetail.delete")}
               </Button>
             </SpaceBetween>
           </Box>
         }
       >
-        Delete hyperspace <Box variant="code">{hyperspace.name}</Box>? This only removes
-        the grouping — the individual spaces are not affected.
+        {t("hyperspaceDetail.deleteBodyPrefix")}<Box variant="code">{hyperspace.name}</Box>{t("hyperspaceDetail.deleteBodySuffix")}
       </Modal>
 
       {/* Hyperspace overview generation confirmation (cost/time warning) */}
       <Modal
         visible={overviewConfirmVisible}
         onDismiss={() => setOverviewConfirmVisible(false)}
-        header="Generate hyperspace overview"
+        header={t("hyperspaceDetail.confirmHeader")}
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button onClick={() => setOverviewConfirmVisible(false)}>Cancel</Button>
+              <Button onClick={() => setOverviewConfirmVisible(false)}>{t("common.cancel")}</Button>
               <Button
                 variant="primary"
                 iconName="gen-ai"
                 loading={overviewSubmitting}
                 onClick={generateOverview}
               >
-                Generate
+                {t("hyperspaceDetail.generate")}
               </Button>
             </SpaceBetween>
           </Box>
@@ -1158,25 +1161,16 @@ export default function HyperspaceDetail() {
         {overviewDocDefs.length > 0 && !isStale ? (
           <SpaceBetween size="m">
             <Box variant="p">
-              This hyperspace overview is already up to date — no member space has changed since
-              it was generated. Regenerating will not refresh any member overview; it only re-runs
-              the hyperspace synthesis (a small cost). Regenerate anyway?
+              {t("hyperspaceDetail.confirmUpToDate")}
             </Box>
           </SpaceBetween>
         ) : (
           <SpaceBetween size="m">
             <Box variant="p">
-              To produce an accurate system-level view, CodeKB will first ensure every one of
-              the <b>{hyperspace.space_ids.length}</b> member space
-              {hyperspace.space_ids.length === 1 ? "" : "s"} has an up-to-date Space Overview.
-              It generates one where it is missing and regenerates any that are older than the
-              space's latest code refresh, then synthesizes the hyperspace overview from them.
+              {t("hyperspaceDetail.confirmBodyPrefix")}<b>{hyperspace.space_ids.length}</b>{t("hyperspaceDetail.confirmBodySuffix", { count: hyperspace.space_ids.length })}
             </Box>
             <Alert type="warning">
-              This runs AI generation across the member spaces, so it will incur Bedrock cost
-              and can take significant time — potentially many minutes, and longer for large
-              hyperspaces. Member spaces that already have a current Space Overview are reused
-              and not regenerated.
+              {t("hyperspaceDetail.confirmWarning")}
             </Alert>
           </SpaceBetween>
         )}

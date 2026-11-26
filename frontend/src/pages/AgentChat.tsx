@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -80,18 +82,19 @@ function TokenUsageBadge({
   usage?: TokenUsageInfo;
   pricingUrl?: string;
 }) {
+  const { t } = useTranslation();
   const totals = usage?.totals;
   if (!totals || totals.total <= 0) return null;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-      <Badge color="blue">{fmtTokens(totals.total)} tokens</Badge>
+      <Badge color="blue">{t("agentChat.tokensBadge", { total: fmtTokens(totals.total) })}</Badge>
       <Box variant="small" color="text-body-secondary">
-        {fmtTokens(totals.input)} in / {fmtTokens(totals.output)} out
+        {t("agentChat.tokensInOut", { input: fmtTokens(totals.input), output: fmtTokens(totals.output) })}
         {pricingUrl && (
           <>
             {" · "}
             <a href={pricingUrl} target="_blank" rel="noopener noreferrer">
-              estimate cost
+              {t("agentChat.estimateCost")}
             </a>
           </>
         )}
@@ -127,15 +130,16 @@ function conversationToMarkdown(
   messages: ChatMessage[],
   scopeLabel: string,
   agentMode: AgentMode,
+  t: TFunction,
 ): string {
   const title =
-    `# Agent Hopper conversation${agentMode === "impact_analysis" ? " — Impact Analysis" : ""}` +
+    `# ${t("agentChat.mdTitle")}${agentMode === "impact_analysis" ? ` — ${t("agentChat.modeImpactAnalysis")}` : ""}` +
     (scopeLabel ? ` — ${scopeLabel}` : "");
   return [
     title,
     "",
     ...messages.flatMap((m) => [
-      `## ${m.role === "user" ? "You" : "Agent Hopper"}`,
+      `## ${m.role === "user" ? t("agentChat.you") : "Agent Hopper"}`,
       "",
       m.content.trim(),
       "",
@@ -145,6 +149,7 @@ function conversationToMarkdown(
 
 /** Copy button styled for dark code blocks — light text on a translucent background. */
 function CodeCopyButton({ text }: { text: string }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
   const handleClick = async (e: React.MouseEvent) => {
@@ -169,11 +174,11 @@ function CodeCopyButton({ text }: { text: string }) {
     <button
       type="button"
       onClick={handleClick}
-      aria-label={copied ? "Copied" : "Copy code"}
-      title={copied ? "Copied!" : "Copy code"}
+      aria-label={copied ? t("common.copied") : t("agentChat.copyCode")}
+      title={copied ? t("agentChat.copiedBang") : t("agentChat.copyCode")}
       className={`agent-code-copy-btn${copied ? " agent-code-copy-btn--copied" : ""}`}
     >
-      {copied ? "✓ Copied" : "Copy"}
+      {copied ? `✓ ${t("common.copied")}` : t("common.copy")}
     </button>
   );
 }
@@ -261,6 +266,7 @@ function ToolResponse({ result, isError }: { result: string; isError: boolean })
 }
 
 function ToolStepDisplay({ step, index }: { step: ToolStep; index: number }) {
+  const { t } = useTranslation();
   const hasInput =
     step.input &&
     Object.values(step.input).some((v) => v !== undefined && v !== null && v !== "");
@@ -288,19 +294,19 @@ function ToolStepDisplay({ step, index }: { step: ToolStep; index: number }) {
         <SpaceBetween size="xs">
           {hasInput && (
             <div>
-              <Box variant="awsui-key-label">Request</Box>
+              <Box variant="awsui-key-label">{t("agentChat.toolRequest")}</Box>
               <pre className="tool-step__code">{prettyMaybeJson(step.input)}</pre>
             </div>
           )}
           {step.result && step.status !== "running" && (
             <div>
-              <Box variant="awsui-key-label">Response</Box>
+              <Box variant="awsui-key-label">{t("agentChat.toolResponse")}</Box>
               <ToolResponse result={step.result} isError={step.status === "error"} />
             </div>
           )}
           {step.status === "running" && (
             <Box color="text-body-secondary" fontSize="body-s">
-              Running…
+              {t("agentChat.toolRunning")}
             </Box>
           )}
         </SpaceBetween>
@@ -317,11 +323,12 @@ function ReasoningSection({
   text: string;
   defaultExpanded?: boolean;
 }) {
+  const { t } = useTranslation();
   if (!text.trim()) return null;
   return (
     <div style={{ marginBottom: 8 }}>
       <ExpandableSection
-        headerText="Thinking"
+        headerText={t("agentChat.thinking")}
         variant="footer"
         defaultExpanded={defaultExpanded}
       >
@@ -356,20 +363,20 @@ function AgentMarkdown({ text }: { text: string }) {
   );
 }
 
-const SUGGESTED_PROMPTS_BY_MODE: Record<AgentMode, { id: string; text: string }[]> = {
+const suggestedPromptsByMode = (t: TFunction): Record<AgentMode, { id: string; text: string }[]> => ({
   chat: [
-    { id: "entry-points",  text: "What are the main entry points in this codebase?" },
-    { id: "exec-flow",     text: "Show me the execution flow of the main function" },
-    { id: "auth",          text: "What functions handle authentication?" },
-    { id: "coupling",      text: "Which components have the highest coupling?" },
+    { id: "entry-points",  text: t("agentChat.promptEntryPoints") },
+    { id: "exec-flow",     text: t("agentChat.promptExecFlow") },
+    { id: "auth",          text: t("agentChat.promptAuth") },
+    { id: "coupling",      text: t("agentChat.promptCoupling") },
   ],
   impact_analysis: [
-    { id: "div-by-zero",   text: "The calculate method doesn't handle division by zero" },
-    { id: "validation",    text: "Add input validation to all public API methods" },
+    { id: "div-by-zero",   text: t("agentChat.promptDivByZero") },
+    { id: "validation",    text: t("agentChat.promptValidation") },
     { id: "gh-issue",      text: "https://github.com/org/repo/issues/42" },
-    { id: "async-parser",  text: "Refactor the parser to support async processing" },
+    { id: "async-parser",  text: t("agentChat.promptAsyncParser") },
   ],
-};
+});
 
 /** Sentinel option value meaning "every space" — never sent to the backend. */
 const ALL_SPACES_VALUE = "__all__";
@@ -378,6 +385,7 @@ const ALL_SPACES_VALUE = "__all__";
 const MAX_SPACES_IN_LABEL = 5;
 
 export default function AgentChat() {
+  const { t } = useTranslation();
   const [projects, setProjects] = useState<SpaceSummary[]>([]);
   const [hyperspaces, setHyperspaces] = useState<Hyperspace[]>([]);
   const [selectedProject, setSelectedProject] =
@@ -411,9 +419,9 @@ export default function AgentChat() {
   const readySpaces = projects.filter((p) => isQueryable(p.status));
 
   const ALL_SPACES_OPTION: MultiselectProps.Option = {
-    label: "All spaces",
+    label: t("agentChat.allSpaces"),
     value: ALL_SPACES_VALUE,
-    description: `Unfiltered search across all ${readySpaces.length} space(s)`,
+    description: t("agentChat.allSpacesDescription", { count: readySpaces.length }),
   };
 
   const projectOptions: MultiselectProps.Options = [
@@ -421,11 +429,11 @@ export default function AgentChat() {
     ...(hyperspaces.length > 0
       ? [
           {
-            label: "Hyperspaces",
+            label: t("nav.hyperspaces"),
             options: hyperspaces.map((hs) => ({
               label: `⚡ ${hs.name}`,
               value: `hs:${hs.hyperspace_id}`,
-              description: `${hs.space_ids.length} spaces`,
+              description: t("agentChat.spacesCount", { count: hs.space_ids.length }),
             })),
           },
         ]
@@ -433,7 +441,7 @@ export default function AgentChat() {
     ...readySpaces.map((p) => ({
       label: p.space_name || p.space_id,
       value: p.space_id,
-      description: `${p.component_count ?? 0} components · ${(p.languages ?? []).join(", ")}`,
+      description: t("agentChat.componentsLanguages", { count: p.component_count ?? 0, languages: (p.languages ?? []).join(", ") }),
     })),
   ];
 
@@ -466,9 +474,9 @@ export default function AgentChat() {
   const hasScope = allSpacesSelected || activeSpaceIds.length > 0;
 
   const scopeLabel = allSpacesSelected
-    ? "All spaces"
+    ? t("agentChat.allSpaces")
     : activeSpaceIds.length > MAX_SPACES_IN_LABEL
-      ? `${activeSpaceIds.length} spaces`
+      ? t("agentChat.spacesCount", { count: activeSpaceIds.length })
       : activeSpaceIds.join(", ");
 
   // A hyperspace query needs READ on every member (all-or-nothing, like the
@@ -541,7 +549,7 @@ export default function AgentChat() {
       if (!res.ok) throw await errorFromResponse(res);
 
       const reader = res.body?.getReader();
-      if (!reader) throw new Error("No response body");
+      if (!reader) throw new Error(t("agentChat.noResponseBody"));
 
       const decoder = new TextDecoder();
       let buffer = "";
@@ -657,7 +665,7 @@ export default function AgentChat() {
             ...prev,
             {
               role: "assistant",
-              content: fullText || "Agent completed without a response.",
+              content: fullText || t("agentChat.noResponse"),
               steps: steps.length > 0 ? [...steps] : undefined,
               reasoning: fullReasoning || undefined,
               timestamp: new Date(),
@@ -671,13 +679,13 @@ export default function AgentChat() {
     } catch (e: any) {
       if (e.name !== "AbortError") {
         if (e instanceof ApiError && e.isExpiredCredentials) {
-          setError(`${e.message} Reconnect your token on the Git credentials page (left nav).`);
+          setError(t("agentChat.reconnectToken", { message: e.message }));
         } else if (e instanceof ApiError && e.isAuthz) {
           // Other authz denials (hyperspace_access_denied, read_denied): the
           // authz-aware message names the blocked member spaces.
           setError(e.displayMessage);
         } else {
-          setError(e.message || "Agent request failed");
+          setError(e.message || t("agentChat.requestFailed"));
         }
       }
     } finally {
@@ -694,25 +702,25 @@ export default function AgentChat() {
   // ── Status text for the live region (announces streaming progress) ──
   const liveStatus = loading
     ? currentSteps.length > 0
-      ? `Agent is using tool ${currentSteps[currentSteps.length - 1].tool}.`
+      ? t("agentChat.liveUsingTool", { tool: currentSteps[currentSteps.length - 1].tool })
       : streamingText
-        ? "Agent is generating a response."
+        ? t("agentChat.liveGenerating")
         : streamingReasoning
-          ? "Agent is thinking through the problem."
-          : "Agent is thinking."
+          ? t("agentChat.liveThinkingThrough")
+          : t("agentChat.liveThinking")
     : "";
 
   return (
     <SpaceBetween size="l">
       <Header
         variant="h1"
-        description="Ask questions about your codebase to Agent Hopper"
+        description={t("agentChat.description")}
       >
         Agent Hopper
       </Header>
 
       <Container>
-        <FormField label="Scope to spaces and hyperspaces" description="Select one or more spaces or hyperspaces for the agent to analyze">
+        <FormField label={t("agentChat.scopeLabel")} description={t("agentChat.scopeDescription")}>
           <Multiselect
             selectedOptions={selectedProject}
             onChange={({ detail }) => {
@@ -725,24 +733,22 @@ export default function AgentChat() {
               clearConversation();
             }}
             options={projectOptions}
-            placeholder="Choose spaces or hyperspaces to analyze"
+            placeholder={t("agentChat.scopePlaceholder")}
             filteringType="auto"
           />
         </FormField>
       </Container>
 
       {scopeBlocked && (
-        <Alert type="warning" header="You don't have access to all spaces in this hyperspace">
+        <Alert type="warning" header={t("agentChat.blockedHeader")}>
           <SpaceBetween size="xs">
             {blockedHyperspaces.map((h) => (
               <span key={h.hyperspace_id}>
-                <b>{h.name}</b>: can't read {h.inaccessible_space_ids!.join(", ")}.
+                <b>{h.name}</b>{t("agentChat.blockedCantRead", { ids: h.inaccessible_space_ids!.join(", ") })}
               </span>
             ))}
             <span>
-              Agent queries over a hyperspace need read access to every member. Remove it from
-              the scope, or get read access to the listed git repositories and make sure a token
-              for them is connected on the Git credentials page.
+              {t("agentChat.blockedHelp")}
             </span>
           </SpaceBetween>
         </Alert>
@@ -750,7 +756,7 @@ export default function AgentChat() {
 
       {hasScope && (
         <Container>
-          <FormField label="Mode" description="Choose how Agent Hopper should respond">
+          <FormField label={t("agentChat.modeLabel")} description={t("agentChat.modeDescription")}>
             <Tiles
               value={agentMode}
               onChange={({ detail }) => {
@@ -760,13 +766,13 @@ export default function AgentChat() {
               items={[
                 {
                   value: "chat",
-                  label: "Chat",
-                  description: "General Q&A about your codebase",
+                  label: t("agentChat.modeChat"),
+                  description: t("agentChat.modeChatDescription"),
                 },
                 {
                   value: "impact_analysis",
-                  label: "Impact Analysis",
-                  description: "Structured defect/enhancement analysis with code-level changes and blast radius",
+                  label: t("agentChat.modeImpactAnalysis"),
+                  description: t("agentChat.modeImpactAnalysisDescription"),
                 },
               ]}
             />
@@ -784,8 +790,8 @@ export default function AgentChat() {
                   <SpaceBetween direction="horizontal" size="xs">
                     <CopyButton
                       variant="normal"
-                      label="Copy as Markdown"
-                      text={conversationToMarkdown(messages, scopeLabel, agentMode)}
+                      label={t("agentChat.copyAsMarkdown")}
+                      text={conversationToMarkdown(messages, scopeLabel, agentMode, t)}
                       disabled={loading}
                     />
                     <Button
@@ -793,13 +799,15 @@ export default function AgentChat() {
                       disabled={loading}
                       iconName="refresh"
                     >
-                      New conversation
+                      {t("agentChat.newConversation")}
                     </Button>
                   </SpaceBetween>
                 ) : undefined
               }
             >
-              Chat{agentMode === "impact_analysis" ? " — Impact Analysis" : ""} — {scopeLabel}
+              {agentMode === "impact_analysis"
+                ? t("agentChat.chatHeaderImpact", { scope: scopeLabel })
+                : t("agentChat.chatHeader", { scope: scopeLabel })}
             </Header>
           }
         >
@@ -814,18 +822,18 @@ export default function AgentChat() {
                   <SpaceBetween size="m">
                     <Box variant="h3">
                       {agentMode === "impact_analysis"
-                        ? "Describe a defect, enhancement, or paste a GitHub issue URL"
-                        : "Ask Agent Hopper about your codebase"}
+                        ? t("agentChat.emptyImpact")
+                        : t("agentChat.emptyChat")}
                     </Box>
                     <Box variant="p" color="text-body-secondary">
-                      Need a starting point? Pick one of these prompts:
+                      {t("agentChat.startingPoint")}
                     </Box>
                     <SupportPromptGroup
-                      ariaLabel="Suggested prompts"
+                      ariaLabel={t("agentChat.suggestedPrompts")}
                       alignment="vertical"
-                      items={SUGGESTED_PROMPTS_BY_MODE[agentMode]}
+                      items={suggestedPromptsByMode(t)[agentMode]}
                       onItemClick={({ detail }) => {
-                        const item = SUGGESTED_PROMPTS_BY_MODE[agentMode].find(
+                        const item = suggestedPromptsByMode(t)[agentMode].find(
                           (p) => p.id === detail.id,
                         );
                         if (item) submit(typeof item.text === "string" ? item.text : "");
@@ -850,7 +858,7 @@ export default function AgentChat() {
                     {!isUser && msg.steps && msg.steps.length > 0 && (
                       <div style={{ marginBottom: 8 }}>
                         <ExpandableSection
-                          headerText={`${msg.steps.length} tool call${msg.steps.length > 1 ? "s" : ""}`}
+                          headerText={t("agentChat.toolCalls", { count: msg.steps.length })}
                           variant="footer"
                         >
                           <ToolStepList steps={msg.steps} />
@@ -860,12 +868,12 @@ export default function AgentChat() {
 
                     <ChatBubble
                       type={isUser ? "outgoing" : "incoming"}
-                      ariaLabel={`${isUser ? "You" : "Agent Hopper"} at ${ts}`}
+                      ariaLabel={t("agentChat.bubbleAria", { who: isUser ? t("agentChat.you") : "Agent Hopper", time: ts })}
                       avatar={
                         isUser ? (
                           <Avatar
-                            ariaLabel="You"
-                            tooltipText={userIdentity?.email || "You"}
+                            ariaLabel={t("agentChat.you")}
+                            tooltipText={userIdentity?.email || t("agentChat.you")}
                             initials={userInitials}
                           />
                         ) : (
@@ -884,7 +892,7 @@ export default function AgentChat() {
                             <Button
                               variant="inline-icon"
                               iconName={isCollapsed ? "angle-down" : "angle-up"}
-                              ariaLabel={isCollapsed ? "Expand response" : "Collapse response"}
+                              ariaLabel={isCollapsed ? t("agentChat.expandResponse") : t("agentChat.collapseResponse")}
                               onClick={() => {
                                 setCollapsedMessages((prev) => {
                                   const next = new Set(prev);
@@ -930,7 +938,7 @@ export default function AgentChat() {
                   {currentSteps.length > 0 && (
                     <div style={{ marginBottom: 8 }}>
                       <ExpandableSection
-                        headerText={`${currentSteps.length} tool call${currentSteps.length > 1 ? "s" : ""} in progress`}
+                        headerText={t("agentChat.toolCallsInProgress", { count: currentSteps.length })}
                         variant="footer"
                         defaultExpanded
                       >
@@ -941,7 +949,7 @@ export default function AgentChat() {
 
                   <ChatBubble
                     type="incoming"
-                    ariaLabel="Agent Hopper is responding"
+                    ariaLabel={t("agentChat.responding")}
                     showLoadingBar={!streamingText}
                     avatar={
                       <Avatar
@@ -961,8 +969,8 @@ export default function AgentChat() {
                     ) : (
                       <Box color="text-body-secondary">
                         {currentSteps.length > 0
-                          ? `Running ${currentSteps[currentSteps.length - 1].tool}…`
-                          : "Thinking…"}
+                          ? t("agentChat.runningTool", { tool: currentSteps[currentSteps.length - 1].tool })
+                          : t("agentChat.thinkingEllipsis")}
                       </Box>
                     )}
                   </ChatBubble>
@@ -983,14 +991,14 @@ export default function AgentChat() {
               value={input}
               onChange={({ detail }) => setInput(detail.value)}
               onAction={handleSend}
-              actionButtonAriaLabel="Send message"
+              actionButtonAriaLabel={t("agentChat.send")}
               actionButtonIconName="send"
               disableActionButton={!input.trim() || loading || !canSubmit}
               disabled={loading}
               placeholder={
                 agentMode === "impact_analysis"
-                  ? "Paste a GitHub issue URL or describe the defect/enhancement…"
-                  : "Ask about your codebase…"
+                  ? t("agentChat.placeholderImpact")
+                  : t("agentChat.placeholderChat")
               }
               minRows={2}
               maxRows={6}

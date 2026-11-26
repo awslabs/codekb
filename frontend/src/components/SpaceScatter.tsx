@@ -1,4 +1,5 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { scaleLinear, type ScaleLinear } from "d3-scale";
 import { select } from "d3-selection";
@@ -91,13 +92,12 @@ interface Metric {
 }
 
 const METRICS: Metric[] = [
-  { id: "loc", label: "Lines of code", get: (r) => r.loc, scale: "log" },
-  { id: "components", label: "Components", get: (r) => r.comps, scale: "log" },
-  { id: "granularity", label: "Components / 1k lines", get: (r) => r.granularity, scale: "log" },
-  { id: "vectors", label: "Vectors", get: (r) => r.vectors, scale: "log" },
-  { id: "languages", label: "Language count", get: (r) => r.langCount, scale: "linear" },
+  { id: "loc", label: "components.metricLoc", get: (r) => r.loc, scale: "log" },
+  { id: "components", label: "components.metricComponents", get: (r) => r.comps, scale: "log" },
+  { id: "granularity", label: "components.metricGranularity", get: (r) => r.granularity, scale: "log" },
+  { id: "vectors", label: "components.metricVectors", get: (r) => r.vectors, scale: "log" },
+  { id: "languages", label: "components.metricLanguages", get: (r) => r.langCount, scale: "linear" },
 ];
-const metricById = (id: string) => METRICS.find((m) => m.id === id) ?? METRICS[0];
 
 const DOT_R = 3.4;
 const toPlot = (v: number, scale: ScaleKind) => (scale === "log" ? Math.log10(Math.max(1, v)) : v);
@@ -110,6 +110,7 @@ interface SpaceScatterProps {
 }
 
 export default function SpaceScatter({ spaces }: SpaceScatterProps) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -122,6 +123,8 @@ export default function SpaceScatter({ spaces }: SpaceScatterProps) {
   const [xId, setXId] = useState("loc");
   const [yId, setYId] = useState("vectors");
 
+  const metrics = useMemo(() => METRICS.map((m) => ({ ...m, label: t(m.label) })), [t]);
+  const metricById = (id: string) => metrics.find((m) => m.id === id) ?? metrics[0];
   const xMetric = metricById(xId);
   const yMetric = metricById(yId);
 
@@ -169,9 +172,9 @@ export default function SpaceScatter({ spaces }: SpaceScatterProps) {
     const colorOf = (r: Row) => map.get(r.lang) ?? OTHER_COLOR;
     const legend = top.map(([l, c]) => ({ key: l, color: map.get(l)!, count: c }));
     const otherCount = sorted.slice(LANG_COLORS.length).reduce((s, [, c]) => s + c, 0);
-    if (otherCount > 0) legend.push({ key: "Other", color: OTHER_COLOR, count: otherCount });
+    if (otherCount > 0) legend.push({ key: t("components.other"), color: OTHER_COLOR, count: otherCount });
     return { colorOf, legend };
-  }, [rows]);
+  }, [rows, t]);
 
   const { xScale, yScale } = useMemo(() => {
     const xs = rows.map((r) => toPlot(xMetric.get(r), xMetric.scale));
@@ -228,25 +231,25 @@ export default function SpaceScatter({ spaces }: SpaceScatterProps) {
       setHoverId(r.id);
       if (!rect) return;
       const parts = [
-        `${fmtNum(r.loc)} lines`,
-        `${fmtNum(r.comps)} components`,
-        r.vectors > 0 ? `${fmtNum(r.vectors)} vectors` : null,
+        t("components.tooltipLines", { count: fmtNum(r.loc) }),
+        t("components.tooltipComponents", { count: fmtNum(r.comps) }),
+        r.vectors > 0 ? t("components.tooltipVectors", { count: fmtNum(r.vectors) }) : null,
         r.languages?.length ? r.languages.join(", ") : null,
       ].filter(Boolean);
       setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top - 14, text: `${r.label} — ${parts.join(" · ")}` });
     },
-    [],
+    [t],
   );
 
   return (
     <div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end", marginBottom: 10 }}>
-        <AxisSelect label="X axis" value={xId} onChange={setXId} options={METRICS} />
-        <AxisSelect label="Y axis" value={yId} onChange={setYId} options={METRICS} />
+        <AxisSelect label={t("components.xAxis")} value={xId} onChange={setXId} options={metrics} />
+        <AxisSelect label={t("components.yAxis")} value={yId} onChange={setYId} options={metrics} />
         <div style={{ flex: 1 }} />
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 12, color: "#5f6b7a" }}>{rows.length.toLocaleString()} spaces · scroll to zoom</span>
-          <Button iconName="zoom-to-fit" onClick={resetZoom}>Reset</Button>
+          <span style={{ fontSize: 12, color: "#5f6b7a" }}>{t("components.scatterSummary", { count: rows.length.toLocaleString() })}</span>
+          <Button iconName="zoom-to-fit" onClick={resetZoom}>{t("components.reset")}</Button>
         </div>
       </div>
 
@@ -260,7 +263,7 @@ export default function SpaceScatter({ spaces }: SpaceScatterProps) {
           height={H}
           style={{ display: "block", cursor: "grab" }}
           role="img"
-          aria-label={`Scatterplot of spaces: ${xMetric.label} versus ${yMetric.label}`}
+          aria-label={t("components.scatterAriaLabel", { x: xMetric.label, y: yMetric.label })}
         >
           <defs>
             <clipPath id="scatter-plot">
@@ -287,11 +290,11 @@ export default function SpaceScatter({ spaces }: SpaceScatterProps) {
 
           <text x={plotX + plotW / 2} y={H - 6} textAnchor="middle" fontSize={16} fontWeight={700} fill="#16202b" fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
             {xMetric.label}
-            {xMetric.scale === "log" && <tspan fontSize={12} fontWeight={400} fill="#8b97a7"> (log scale)</tspan>}
+            {xMetric.scale === "log" && <tspan fontSize={12} fontWeight={400} fill="#8b97a7"> {t("components.logScale")}</tspan>}
           </text>
           <text transform={`translate(18, ${plotY + plotH / 2}) rotate(-90)`} textAnchor="middle" fontSize={16} fontWeight={700} fill="#16202b" fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
             {yMetric.label}
-            {yMetric.scale === "log" && <tspan fontSize={12} fontWeight={400} fill="#8b97a7"> (log scale)</tspan>}
+            {yMetric.scale === "log" && <tspan fontSize={12} fontWeight={400} fill="#8b97a7"> {t("components.logScale")}</tspan>}
           </text>
 
           <g clipPath="url(#scatter-plot)">
@@ -334,7 +337,7 @@ export default function SpaceScatter({ spaces }: SpaceScatterProps) {
             color: "#334155", maxWidth: 180,
           }}
         >
-          <div style={{ fontWeight: 600, marginBottom: 4, color: "#5f6b7a" }}>Primary language</div>
+          <div style={{ fontWeight: 600, marginBottom: 4, color: "#5f6b7a" }}>{t("components.primaryLanguage")}</div>
           {legend.map((d) => (
             <div key={d.key} style={{ display: "flex", alignItems: "center", gap: 6, lineHeight: "16px" }}>
               <span style={{ width: 9, height: 9, borderRadius: 9, background: d.color, flexShrink: 0 }} />

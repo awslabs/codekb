@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Form from "@cloudscape-design/components/form";
 import FormField from "@cloudscape-design/components/form-field";
@@ -22,6 +23,7 @@ import { getUser } from "../auth";
 const MIN_SPACES = 1;
 
 export default function CreateHyperspace() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -106,7 +108,7 @@ export default function CreateHyperspace() {
       setFlash([
         {
           type: "error",
-          content: e.message || "Failed to create hyperspace",
+          content: e.message || t("createHyperspace.createFailed"),
           dismissible: true,
           onDismiss: () => setFlash([]),
         },
@@ -138,9 +140,9 @@ export default function CreateHyperspace() {
     <SpaceBetween size="l">
       <BreadcrumbGroup
         items={[
-          { text: "CodeKB", href: "/" },
-          { text: "Hyperspaces", href: "/hyperspaces" },
-          { text: "Create", href: "/hyperspaces/new" },
+          { text: t("common.breadcrumbRoot"), href: "/" },
+          { text: t("nav.hyperspaces"), href: "/hyperspaces" },
+          { text: t("createHyperspace.breadcrumbCreate"), href: "/hyperspaces/new" },
         ]}
         onFollow={(e) => {
           e.preventDefault();
@@ -151,28 +153,28 @@ export default function CreateHyperspace() {
 
       <Form
         header={
-          <Header variant="h1" description="Group 1 or more spaces together for cross-project analysis">
-            Create hyperspace
+          <Header variant="h1" description={t("createHyperspace.headerDescription")}>
+            {t("createHyperspace.headerTitle")}
           </Header>
         }
         actions={
           <SpaceBetween direction="horizontal" size="xs">
             <Button variant="link" onClick={() => navigate("/hyperspaces")}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" loading={submitting} disabled={!isValid} onClick={handleCreate}>
-              Create
+              {t("createHyperspace.create")}
             </Button>
           </SpaceBetween>
         }
       >
         <SpaceBetween size="l">
-          <Container header={<Header variant="h2">Details</Header>}>
-            <FormField label="Name" description="A descriptive name for this hyperspace">
+          <Container header={<Header variant="h2">{t("createHyperspace.detailsHeader")}</Header>}>
+            <FormField label={t("createHyperspace.nameLabel")} description={t("createHyperspace.nameDescription")}>
               <Input
                 value={name}
                 onChange={({ detail }) => setName(detail.value)}
-                placeholder="e.g. Payment Platform"
+                placeholder={t("createHyperspace.namePlaceholder")}
               />
             </FormField>
           </Container>
@@ -187,29 +189,29 @@ export default function CreateHyperspace() {
             variant="container"
             empty={
               <Box textAlign="center" padding="m" color="inherit">
-                No spaces selected yet. Select one or more below and choose <b>Add selected</b>.
+                {t("createHyperspace.emptySelectedPrefix")}<b>{t("createHyperspace.addSelected")}</b>{t("createHyperspace.emptySelectedSuffix")}
               </Box>
             }
             header={
               <Header
                 counter={`(${selectedSpaces.length})`}
-                description="Spaces that will be grouped into this hyperspace (at least one)"
+                description={t("createHyperspace.selectedDescription")}
                 actions={
                   <Button
                     disabled={selSelection.length === 0}
                     onClick={() => removeSpaces(selSelection.map((s) => s.space_id))}
                   >
-                    Remove selected
+                    {t("createHyperspace.removeSelected")}
                   </Button>
                 }
               >
-                Selected spaces
+                {t("createHyperspace.selectedHeader")}
               </Header>
             }
             filter={
               <TextFilter
                 filteringText={selFilter}
-                filteringPlaceholder="Find selected spaces"
+                filteringPlaceholder={t("createHyperspace.findSelectedPlaceholder")}
                 onChange={({ detail }) => {
                   setSelFilter(detail.filteringText);
                   setSelPage(1);
@@ -220,19 +222,20 @@ export default function CreateHyperspace() {
               <Pagination
                 currentPageIndex={selPage}
                 pagesCount={Math.max(1, Math.ceil(filteredSelected.length / pageSize))}
+                ariaLabels={{ nextPageLabel: t("createHyperspace.pageNext"), previousPageLabel: t("createHyperspace.pagePrevious"), pageLabel: (n) => t("createHyperspace.pageLabel", { page: n }) }}
                 onChange={({ detail }) => setSelPage(detail.currentPageIndex)}
               />
             }
             columnDefinitions={[
-              { id: "name", header: "Name", cell: nameCell },
-              { id: "components", header: "Components", cell: (s) => s.component_count ?? "—" },
-              { id: "languages", header: "Languages", cell: langCell },
+              { id: "name", header: t("createHyperspace.colName"), cell: nameCell },
+              { id: "components", header: t("createHyperspace.colComponents"), cell: (s) => s.component_count ?? "—" },
+              { id: "languages", header: t("createHyperspace.colLanguages"), cell: langCell },
               {
                 id: "actions",
                 header: "",
                 cell: (s) => (
                   <Button variant="inline-link" onClick={() => removeSpaces([s.space_id])}>
-                    Remove
+                    {t("createHyperspace.remove")}
                   </Button>
                 ),
               },
@@ -250,28 +253,28 @@ export default function CreateHyperspace() {
             empty={
               <Box textAlign="center" padding="m" color="inherit">
                 {showMySpaces
-                  ? 'None of your indexed spaces are available to add. Toggle off "My spaces" to add spaces created by others.'
-                  : "No other indexed spaces available to add."}
+                  ? t("createHyperspace.availableEmptyMine")
+                  : t("createHyperspace.availableEmpty")}
               </Box>
             }
             header={
               <Header
                 counter={`(${availableSpaces.length})`}
-                description="Indexed spaces not yet selected"
+                description={t("createHyperspace.availableDescription")}
                 actions={
                   <Button disabled={addSelection.length === 0} onClick={() => addSpaces(addSelection)}>
-                    Add selected
+                    {t("createHyperspace.addSelected")}
                   </Button>
                 }
               >
-                Available spaces
+                {t("createHyperspace.availableHeader")}
               </Header>
             }
             filter={
               <SpaceBetween direction="horizontal" size="xs" alignItems="center">
                 <TextFilter
                   filteringText={addFilter}
-                  filteringPlaceholder="Find spaces to add"
+                  filteringPlaceholder={t("createHyperspace.findToAddPlaceholder")}
                   onChange={({ detail }) => {
                     setAddFilter(detail.filteringText);
                     setAddPage(1);
@@ -284,7 +287,7 @@ export default function CreateHyperspace() {
                     setAddPage(1);
                   }}
                 >
-                  My spaces
+                  {t("createHyperspace.mySpaces")}
                 </Toggle>
               </SpaceBetween>
             }
@@ -292,19 +295,20 @@ export default function CreateHyperspace() {
               <Pagination
                 currentPageIndex={addPage}
                 pagesCount={Math.max(1, Math.ceil(filteredAvailable.length / pageSize))}
+                ariaLabels={{ nextPageLabel: t("createHyperspace.pageNext"), previousPageLabel: t("createHyperspace.pagePrevious"), pageLabel: (n) => t("createHyperspace.pageLabel", { page: n }) }}
                 onChange={({ detail }) => setAddPage(detail.currentPageIndex)}
               />
             }
             columnDefinitions={[
-              { id: "name", header: "Name", cell: nameCell },
-              { id: "components", header: "Components", cell: (s) => s.component_count ?? "—" },
-              { id: "languages", header: "Languages", cell: langCell },
+              { id: "name", header: t("createHyperspace.colName"), cell: nameCell },
+              { id: "components", header: t("createHyperspace.colComponents"), cell: (s) => s.component_count ?? "—" },
+              { id: "languages", header: t("createHyperspace.colLanguages"), cell: langCell },
               {
                 id: "actions",
                 header: "",
                 cell: (s) => (
                   <Button variant="inline-link" onClick={() => addSpaces([s])}>
-                    Add
+                    {t("createHyperspace.add")}
                   </Button>
                 ),
               },

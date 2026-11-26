@@ -104,6 +104,8 @@ export interface SpaceDetail {
   vector_count: number;
   git_url: string;
   git_commit_hash?: string;
+  overview_language?: string;
+  analysis_language?: string;
   /** Exclusion patterns the space was created with (fixed for its lifetime). */
   exclude_patterns: string[];
   visibility?: string | null; // "public" | "private" for git spaces; null for zip/legacy
@@ -241,6 +243,8 @@ export interface CreateSpaceRequest {
   branch?: string;
   summarize?: boolean;
   omit_low_business_relevance?: boolean;
+  overview_language?: string;
+  analysis_language?: string;
 }
 
 export interface GitBranches {
@@ -267,6 +271,8 @@ export interface StartUploadAnalysisRequest {
   space_name: string;
   summarize?: boolean;
   omit_low_business_relevance?: boolean;
+  overview_language?: string;
+  analysis_language?: string;
 }
 
 export interface Hyperspace {

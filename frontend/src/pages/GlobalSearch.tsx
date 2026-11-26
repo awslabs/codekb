@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import Table from "@cloudscape-design/components/table";
 import Header from "@cloudscape-design/components/header";
 import Button from "@cloudscape-design/components/button";
@@ -18,6 +19,7 @@ import { api, isQueryable, SpaceSummary, Hyperspace } from "../api/client";
 import { useDefaultTopK } from "../hooks/useSearchDefaults";
 
 export default function GlobalSearch() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [spaces, setSpaces] = useState<SpaceSummary[]>([]);
   const [hyperspaces, setHyperspaces] = useState<Hyperspace[]>([]);
@@ -56,11 +58,11 @@ export default function GlobalSearch() {
     ...(hyperspaces.length > 0
       ? [
           {
-            label: "Hyperspaces",
+            label: t("nav.hyperspaces"),
             options: hyperspaces.map((hs) => ({
               label: `⚡ ${hs.name}`,
               value: `hs:${hs.hyperspace_id}`,
-              description: `${hs.space_ids.length} spaces`,
+              description: t("globalSearch.spacesCount", { count: hs.space_ids.length }),
             })),
           },
         ]
@@ -70,7 +72,7 @@ export default function GlobalSearch() {
       .map((s) => ({
         label: s.space_name || s.space_id,
         value: s.space_id,
-        description: `${s.component_count ?? 0} components`,
+        description: t("globalSearch.componentsCount", { count: s.component_count ?? 0 }),
       })),
   ];
 
@@ -105,7 +107,7 @@ export default function GlobalSearch() {
     } catch (e: any) {
       setFlash([{
         type: "error",
-        content: `Search failed: ${e.message}`,
+        content: t("globalSearch.searchFailed", { message: e.message }),
         dismissible: true,
         onDismiss: () => setFlash([]),
       }]);
@@ -118,8 +120,8 @@ export default function GlobalSearch() {
     <SpaceBetween size="l">
       <BreadcrumbGroup
         items={[
-          { text: "CodeKB", href: "/" },
-          { text: "Global search", href: "/search" },
+          { text: t("common.breadcrumbRoot"), href: "/" },
+          { text: t("nav.globalSearch"), href: "/search" },
         ]}
         onFollow={(e) => { e.preventDefault(); navigate(e.detail.href); }}
       />
@@ -127,39 +129,39 @@ export default function GlobalSearch() {
 
       <Header
         variant="h1"
-        description="Search across component descriptions in all or selected spaces"
+        description={t("globalSearch.description")}
       >
-        Global semantic search
+        {t("globalSearch.title")}
       </Header>
 
       <Container>
         <SpaceBetween size="m">
           <ColumnLayout columns={2}>
-            <FormField label="Search query" description="Describe what you're looking for in natural language">
+            <FormField label={t("globalSearch.queryLabel")} description={t("globalSearch.queryDescription")}>
               <Input
                 value={query}
                 onChange={({ detail }) => setQuery(detail.value)}
-                placeholder="e.g. functions that handle authentication"
+                placeholder={t("globalSearch.queryPlaceholder")}
                 type="search"
                 onKeyDown={({ detail }) => { if (detail.key === "Enter") handleSearch(); }}
               />
             </FormField>
-            <FormField label="Scope to spaces and hyperspaces" description="Leave empty to search all spaces">
+            <FormField label={t("globalSearch.scopeLabel")} description={t("globalSearch.scopeDescription")}>
               <Multiselect
                 selectedOptions={selectedSpaces}
                 onChange={({ detail }) => setSelectedSpaces([...detail.selectedOptions])}
                 options={spaceOptions}
-                placeholder="All spaces"
+                placeholder={t("globalSearch.allSpaces")}
                 filteringType="auto"
               />
             </FormField>
           </ColumnLayout>
           <SpaceBetween direction="horizontal" size="xs">
             <Button variant="primary" loading={loading} onClick={handleSearch} disabled={!query.trim()}>
-              Search
+              {t("globalSearch.search")}
             </Button>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <Box variant="awsui-key-label" fontSize="body-s">Limit</Box>
+              <Box variant="awsui-key-label" fontSize="body-s">{t("globalSearch.limit")}</Box>
               <div style={{ width: 70 }}>
                 <Input
                   value={limit}
@@ -175,24 +177,24 @@ export default function GlobalSearch() {
 
       <Table
         loading={loading}
-        loadingText="Searching vector store..."
+        loadingText={t("globalSearch.searching")}
         items={results}
         trackBy="key"
         wrapLines
         empty={
           <Box textAlign="center" padding="l" color="inherit">
-            {searched ? "No results found. Try a different query." : "Enter a query above to search across spaces."}
+            {searched ? t("globalSearch.noResults") : t("globalSearch.enterQuery")}
           </Box>
         }
         header={
           <Header counter={searched ? `(${results.length})` : undefined}>
-            Results
+            {t("globalSearch.results")}
           </Header>
         }
         columnDefinitions={[
           {
             id: "key",
-            header: "Component",
+            header: t("globalSearch.colComponent"),
             cell: (item) => {
               const spaceId = item.metadata?.space_id;
               return spaceId ? (
@@ -207,7 +209,7 @@ export default function GlobalSearch() {
           },
           {
             id: "space",
-            header: "Space",
+            header: t("globalSearch.colSpace"),
             cell: (item) => {
               const sid = item.metadata?.space_id;
               return sid ? <Badge color="blue">{sid}</Badge> : "—";
@@ -215,12 +217,12 @@ export default function GlobalSearch() {
           },
           {
             id: "type",
-            header: "Type",
+            header: t("globalSearch.colType"),
             cell: (item) => item.metadata?.type ?? "—",
           },
           {
             id: "distance",
-            header: "Score",
+            header: t("globalSearch.colScore"),
             cell: (item) => {
               const d = item.distance;
               if (d == null) return "—";
@@ -232,7 +234,7 @@ export default function GlobalSearch() {
             ? [
                 {
                   id: "relevance",
-                  header: "Business relevance",
+                  header: t("globalSearch.colBusinessRelevance"),
                   cell: (item: Record<string, any>) =>
                     relevanceEnabledSpaceIds.has(item.metadata?.space_id) ? (
                       <BusinessRelevanceSummary metadata={item.metadata} />
@@ -244,7 +246,7 @@ export default function GlobalSearch() {
             : []),
           {
             id: "description",
-            header: "Description",
+            header: t("globalSearch.colDescription"),
             cell: (item) => {
               const desc = item.metadata?.description ?? "";
               return <Box variant="p" fontSize="body-s">{desc}</Box>;

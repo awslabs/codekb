@@ -29,6 +29,7 @@ from string import Template
 
 from strands import Agent, tool
 
+from ..core.language_directive import LanguageDirective, resolve_language_directive
 from ..core.logging_utils import get_logger
 from .overview_common import (
     MERMAID_RULE,
@@ -407,10 +408,12 @@ class SpaceOverviewGenerator(OverviewGeneratorBase):
         self,
         space_id: str,
         on_progress: Optional[ProgressCallback] = None,
+        language_directive: Optional[LanguageDirective] = None,
     ):
         super().__init__(log_prefix="[space_overview]")
         self.space_id = space_id
         self.on_progress = on_progress
+        self.language_directive = language_directive or resolve_language_directive(None)
 
     def _get_tools(self) -> list:
         """Build tools scoped to this space for the exploration agent.
@@ -574,8 +577,12 @@ class SpaceOverviewGenerator(OverviewGeneratorBase):
 
         doc_title = next((d["title"] for d in OVERVIEW_DOCUMENTS if d["key"] == doc_key), doc_key)
 
+        # Only the document prose is localized; the exploration prompt is not.
+        instruction = self.language_directive.instruction_line()
+        system_prompt = f"{gen_prompt}\n{instruction}" if instruction else gen_prompt
+
         return self._generate_document(
-            system_prompt=gen_prompt,
+            system_prompt=system_prompt,
             user_message=(
                 f"Here is the complete exploration report for the codebase:\n\n"
                 f"---\n{exploration_report}\n---\n\n"

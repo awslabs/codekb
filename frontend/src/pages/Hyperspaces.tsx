@@ -15,11 +15,13 @@ import CollectionPreferences from "@cloudscape-design/components/collection-pref
 import Link from "@cloudscape-design/components/link";
 import Toggle from "@cloudscape-design/components/toggle";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, Hyperspace } from "../api/client";
 import { getUser } from "../auth";
 
 export default function Hyperspaces() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -55,7 +57,7 @@ export default function Hyperspaces() {
     setSelectedItems([]);
     queryClient.invalidateQueries({ queryKey: ["hyperspaces"] });
     if (failures.length === 0) {
-      setFlash([{ type: "success", content: `Deleted ${succeeded} hyperspace(s).`, dismissible: true, onDismiss: () => setFlash([]) }]);
+      setFlash([{ type: "success", content: t("hyperspaces.flashDeleted", { count: succeeded }), dismissible: true, onDismiss: () => setFlash([]) }]);
     } else {
       const authz = failures
         .map((f) => f.reason)
@@ -63,7 +65,7 @@ export default function Hyperspaces() {
       const detail = authz ? authz.displayMessage : failures[0].reason?.message ?? "";
       setFlash([{
         type: succeeded > 0 ? "warning" : "error",
-        content: `Deleted ${succeeded} of ${items.length}; ${failures.length} failed. ${detail}`,
+        content: t("hyperspaces.flashDeletePartial", { succeeded, total: items.length, failed: failures.length, detail }),
         dismissible: true,
         onDismiss: () => setFlash([]),
       }]);
@@ -95,17 +97,16 @@ export default function Hyperspaces() {
     <SpaceBetween size="l">
       <BreadcrumbGroup
         items={[
-          { text: "CodeKB", href: "/" },
-          { text: "Hyperspaces", href: "/hyperspaces" },
+          { text: t("common.breadcrumbRoot"), href: "/" },
+          { text: t("nav.hyperspaces"), href: "/hyperspaces" },
         ]}
         onFollow={(e) => { e.preventDefault(); navigate(e.detail.href); }}
       />
       <Flashbar items={flash} />
 
       {invalidCount > 0 && (
-        <Alert type="warning" header="Some hyperspaces are invalid">
-          {invalidCount} hyperspace{invalidCount === 1 ? "" : "s"} reference a space that was deleted.
-          Open a flagged hyperspace to remove the deleted space(s) and repair it.
+        <Alert type="warning" header={t("hyperspaces.invalidHeader")}>
+          {t("hyperspaces.invalidBody", { count: invalidCount })}
         </Alert>
       )}
 
@@ -114,70 +115,70 @@ export default function Hyperspaces() {
         selectedItems={selectedItems}
         onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
         loading={loading}
-        loadingText="Loading hyperspaces..."
+        loadingText={t("hyperspaces.loadingText")}
         items={paginated}
         trackBy="hyperspace_id"
         empty={
           <Box textAlign="center" padding="l" color="inherit">
-            <b>No hyperspaces</b>
+            <b>{t("hyperspaces.emptyTitle")}</b>
             <Box padding={{ bottom: "s" }} variant="p" color="inherit">
-              No hyperspaces yet. Create one to group spaces together.
+              {t("hyperspaces.emptyBody")}
             </Box>
-            <Button onClick={() => navigate("/hyperspaces/new")}>New hyperspace</Button>
+            <Button onClick={() => navigate("/hyperspaces/new")}>{t("hyperspaces.newHyperspace")}</Button>
           </Box>
         }
         header={
           <Header
-            description="Named collections of spaces for cross-project analysis"
+            description={t("hyperspaces.description")}
             counter={`(${filtered.length})`}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <Button iconName="refresh" onClick={() => refetchHs()} />
+                <Button iconName="refresh" ariaLabel={t("common.refresh")} onClick={() => refetchHs()} />
                 <Button disabled={selectedItems.length === 0} onClick={() => setDeleteVisible(true)}>
-                  Delete
+                  {t("hyperspaces.delete")}
                 </Button>
                 <Button variant="primary" onClick={() => navigate("/hyperspaces/new")}>
-                  New hyperspace
+                  {t("hyperspaces.newHyperspace")}
                 </Button>
               </SpaceBetween>
             }
           >
-            Hyperspaces
+            {t("nav.hyperspaces")}
           </Header>
         }
         filter={
           <SpaceBetween direction="horizontal" size="xs" alignItems="center">
             <TextFilter
               filteringText={filterText}
-              filteringPlaceholder="Find hyperspaces"
+              filteringPlaceholder={t("hyperspaces.findPlaceholder")}
               onChange={({ detail }) => { setFilterText(detail.filteringText); setCurrentPage(1); }}
             />
             <Toggle
               checked={showMyHyperspaces}
               onChange={({ detail }) => { setShowMyHyperspaces(detail.checked); setCurrentPage(1); }}
             >
-              My hyperspaces
+              {t("hyperspaces.myHyperspaces")}
             </Toggle>
           </SpaceBetween>
         }
-        pagination={<Pagination currentPageIndex={currentPage} pagesCount={pagesCount} onChange={({ detail }) => setCurrentPage(detail.currentPageIndex)} />}
+        pagination={<Pagination currentPageIndex={currentPage} pagesCount={pagesCount} ariaLabels={{ nextPageLabel: t("hyperspaces.pageNext"), previousPageLabel: t("hyperspaces.pagePrevious"), pageLabel: (n) => t("hyperspaces.pageLabel", { page: n }) }} onChange={({ detail }) => setCurrentPage(detail.currentPageIndex)} />}
         preferences={
           <CollectionPreferences
-            title="Table settings"
-            confirmLabel="Confirm"
-            cancelLabel="Cancel"
+            title={t("common.tableSettings")}
+            confirmLabel={t("common.confirm")}
+            cancelLabel={t("common.cancel")}
             preferences={{ pageSize }}
             onConfirm={({ detail }) => {
               setPageSize(detail.pageSize ?? 10);
               setCurrentPage(1);
             }}
             pageSizePreference={{
-              title: "Page size",
+              title: t("common.pageSize"),
               options: [
-                { value: 10, label: "10 rows" },
-                { value: 25, label: "25 rows" },
-                { value: 50, label: "50 rows" },
-                { value: 100, label: "100 rows" },
+                { value: 10, label: t("common.rows", { count: 10 }) },
+                { value: 25, label: t("common.rows", { count: 25 }) },
+                { value: 50, label: t("common.rows", { count: 50 }) },
+                { value: 100, label: t("common.rows", { count: 100 }) },
               ],
             }}
           />
@@ -185,7 +186,7 @@ export default function Hyperspaces() {
         columnDefinitions={[
           {
             id: "name",
-            header: "Name",
+            header: t("hyperspaces.colName"),
             cell: (item) => (
               <div>
                 <SpaceBetween direction="horizontal" size="xs">
@@ -196,9 +197,9 @@ export default function Hyperspaces() {
                   >
                     <b>{item.name}</b>
                   </Link>
-                  {item.invalid && <Badge color="severity-medium">Invalid</Badge>}
+                  {item.invalid && <Badge color="severity-medium">{t("hyperspaces.badgeInvalid")}</Badge>}
                   {(item.inaccessible_space_ids?.length ?? 0) > 0 && (
-                    <Badge color="grey">No access</Badge>
+                    <Badge color="grey">{t("hyperspaces.badgeNoAccess")}</Badge>
                   )}
                 </SpaceBetween>
                 <div style={{ fontSize: 11, color: "#687078", marginTop: 2 }}>{item.hyperspace_id}</div>
@@ -208,7 +209,7 @@ export default function Hyperspaces() {
           },
           {
             id: "spaces",
-            header: "Spaces",
+            header: t("hyperspaces.colSpaces"),
             cell: (item) => {
               const missing = new Set(item.missing_space_ids ?? []);
               const inaccessible = new Set(item.inaccessible_space_ids ?? []);
@@ -219,9 +220,9 @@ export default function Hyperspaces() {
                 <SpaceBetween direction="horizontal" size="xs">
                   {shown.map((sid) =>
                     missing.has(sid) ? (
-                      <Badge key={sid} color="severity-medium">{sid} (deleted)</Badge>
+                      <Badge key={sid} color="severity-medium">{t("hyperspaces.spaceDeleted", { id: sid })}</Badge>
                     ) : inaccessible.has(sid) ? (
-                      <Badge key={sid} color="grey">{sid} (no access)</Badge>
+                      <Badge key={sid} color="grey">{t("hyperspaces.spaceNoAccess", { id: sid })}</Badge>
                     ) : (
                       <Badge key={sid} color="blue">{sid}</Badge>
                     ),
@@ -231,7 +232,7 @@ export default function Hyperspaces() {
                       onFollow={(e) => { e.preventDefault(); navigate(`/hyperspaces/${item.hyperspace_id}`); }}
                       href={`/hyperspaces/${item.hyperspace_id}`}
                     >
-                      +{overflow} more
+                      {t("hyperspaces.more", { count: overflow })}
                     </Link>
                   )}
                 </SpaceBetween>
@@ -240,12 +241,12 @@ export default function Hyperspaces() {
           },
           {
             id: "count",
-            header: "# Spaces",
+            header: t("hyperspaces.colCount"),
             cell: (item) => item.space_ids.length,
           },
           {
             id: "created_by",
-            header: "Created by",
+            header: t("hyperspaces.colCreatedBy"),
             cell: (item) => item.created_by || "—",
           },
         ]}
@@ -255,19 +256,19 @@ export default function Hyperspaces() {
       <Modal
         visible={deleteVisible}
         onDismiss={() => setDeleteVisible(false)}
-        header="Delete hyperspaces"
+        header={t("hyperspaces.deleteHeader")}
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button onClick={() => setDeleteVisible(false)}>Cancel</Button>
+              <Button onClick={() => setDeleteVisible(false)}>{t("common.cancel")}</Button>
               <Button variant="primary" loading={deleting} onClick={handleDelete}>
-                Delete
+                {t("hyperspaces.delete")}
               </Button>
             </SpaceBetween>
           </Box>
         }
       >
-        Delete {selectedItems.length} hyperspace(s)? This only removes the grouping — individual spaces are not affected.
+        {t("hyperspaces.deleteBody", { count: selectedItems.length })}
         <Box variant="p" padding={{ top: "s" }}>
           {selectedItems.map((hs) => (
             <Box key={hs.hyperspace_id} variant="code">{hs.name} ({hs.hyperspace_id})</Box>

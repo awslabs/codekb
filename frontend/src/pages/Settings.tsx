@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { useNavigate } from "react-router-dom";
 import Box from "@cloudscape-design/components/box";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
@@ -54,10 +56,11 @@ function ScreenReaderOnly({ children }: { children: string }) {
  * doesn't rely on contrast alone.
  */
 function SettingValue({ value, setHere }: { value: string | null; setHere: boolean }) {
+  const { t } = useTranslation();
   // "Not set" rather than "Model default": nothing is sent, and what the model
   // then does varies (no thinking on Opus 4.6, adaptive thinking on Claude 5.x).
   if (!value) {
-    return <Box color="text-status-inactive">Not set</Box>;
+    return <Box color="text-status-inactive">{t("settings.notSet")}</Box>;
   }
   if (setHere) {
     // Bold, not a lighter grey: the inactive grey is already Cloudscape's
@@ -69,11 +72,11 @@ function SettingValue({ value, setHere }: { value: string | null; setHere: boole
     );
   }
   return (
-    <span title="Inherited from Default for all workloads">
+    <span title={t("settings.inheritedTitle")}>
       <Box variant="code" color="text-status-inactive">
         {value}
       </Box>
-      <ScreenReaderOnly>, inherited from the default for all workloads</ScreenReaderOnly>
+      <ScreenReaderOnly>{t("settings.inheritedSrOnly")}</ScreenReaderOnly>
     </span>
   );
 }
@@ -92,7 +95,7 @@ function settingColumn(id: ModelField, header: string) {
  * The startup check, summarized once. Verified is the normal case, so only
  * the rows that weren't verified are marked in the table.
  */
-function startupCheckSummary(statuses: StartupCheckStatus[]) {
+function startupCheckSummary(statuses: StartupCheckStatus[], t: TFunction) {
   const notVerified = statuses.filter((s) => s === "not_verified").length;
   const verified = statuses.filter((s) => s === "verified").length;
   // Same shape in every state: what happened, at startup. Provider-neutral, so
@@ -101,27 +104,27 @@ function startupCheckSummary(statuses: StartupCheckStatus[]) {
   if (notVerified > 0) {
     return (
       <StatusIndicator type="warning">
-        Couldn't verify {notVerified} workload{notVerified === 1 ? "" : "s"} at startup. See
-        the service log.
+        {t("settings.startupNotVerifiedCount", { count: notVerified })}
       </StatusIndicator>
     );
   }
   if (verified === 0) {
     return (
       <StatusIndicator type="stopped">
-        Not verified at startup: CODEKB_LLM_STARTUP_CHECK is off.
+        {t("settings.startupCheckOff")}
       </StatusIndicator>
     );
   }
-  return <StatusIndicator type="success">Verified at startup</StatusIndicator>;
+  return <StatusIndicator type="success">{t("settings.startupVerified")}</StatusIndicator>;
 }
 
 /** Per-row mark, shown only for a workload the startup check didn't verify. */
 function RowStartupMark({ status }: { status: StartupCheckStatus }) {
+  const { t } = useTranslation();
   if (status === "not_verified") {
-    return <StatusIndicator type="warning">Not verified at startup</StatusIndicator>;
+    return <StatusIndicator type="warning">{t("settings.rowNotVerified")}</StatusIndicator>;
   }
-  return <Box color="text-status-inactive">Not checked at startup</Box>;
+  return <Box color="text-status-inactive">{t("settings.rowNotChecked")}</Box>;
 }
 
 // Inlined at build time by bundle.sh (--release only). Undefined for local builds
@@ -129,6 +132,7 @@ function RowStartupMark({ status }: { status: StartupCheckStatus }) {
 const RELEASE_VERSION = import.meta.env.VITE_CODEKB_VERSION as string | undefined;
 
 export default function Settings() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -152,7 +156,7 @@ export default function Settings() {
     ? [
         {
           key: "__defaults__",
-          label: "Default for all workloads",
+          label: t("settings.defaultForAll"),
           envVars: "CODEKB_BEDROCK_MODEL_ID, CODEKB_LLM_*",
           isDefault: true,
           values: models.defaults,
@@ -161,7 +165,7 @@ export default function Settings() {
         },
         ...models.workloads.map((m) => ({
           key: m.workload,
-          label: WORKLOAD_LABELS[m.workload] ?? m.workload,
+          label: WORKLOAD_LABELS[m.workload] ? t(WORKLOAD_LABELS[m.workload]) : m.workload,
           // Mirrors Workload.env_var() in backend/src/core/llm_settings.py.
           envVars: `CODEKB_${m.workload.toUpperCase()}_*`,
           isDefault: false,
@@ -180,22 +184,22 @@ export default function Settings() {
   const infra = config?.infrastructure ?? null;
   const items = infra
     ? [
-        { label: "S3 bucket", ok: infra.s3_bucket.exists },
-        { label: "Vectors bucket", ok: infra.vectors_bucket.exists },
-        { label: "Vector index", ok: infra.vector_index.exists },
-        { label: "Git credentials KMS key", ok: infra.kms_key.exists },
+        { label: t("settings.s3Bucket"), ok: infra.s3_bucket.exists },
+        { label: t("settings.vectorsBucket"), ok: infra.vectors_bucket.exists },
+        { label: t("settings.vectorIndex"), ok: infra.vector_index.exists },
+        { label: t("settings.kmsKey"), ok: infra.kms_key.exists },
       ]
     : [];
 
   return (
     <SpaceBetween size="l">
       <BreadcrumbGroup
-        items={[{ text: "CodeKB", href: "/" }, { text: "Settings", href: "/settings" }]}
+        items={[{ text: t("common.breadcrumbRoot"), href: "/" }, { text: t("nav.settings"), href: "/settings" }]}
         onFollow={(e) => { e.preventDefault(); navigate(e.detail.href); }}
       />
 
-      <Header variant="h1" description="Manage CodeKB infrastructure and configuration">
-        Settings
+      <Header variant="h1" description={t("settings.description")}>
+        {t("nav.settings")}
       </Header>
 
       {/* Infrastructure status (read-only — provisioned via CDK or setup_aws.sh) */}
@@ -203,14 +207,14 @@ export default function Settings() {
         header={
           <Header
             variant="h2"
-            description="The S3 buckets, vector index and embeddings model CodeKB uses in your AWS account"
+            description={t("settings.infrastructureDescription")}
           >
-            Infrastructure
+            {t("settings.infrastructure")}
           </Header>
         }
       >
         {!infra ? (
-          <Alert type="error">Failed to check infrastructure status. Verify your AWS credentials and config.</Alert>
+          <Alert type="error">{t("settings.infrastructureFailed")}</Alert>
         ) : (
           <SpaceBetween size="s">
             {infra.error && <Alert type="warning">{infra.error}</Alert>}
@@ -219,14 +223,14 @@ export default function Settings() {
                 <div key={it.label}>
                   <Box variant="awsui-key-label">{it.label}</Box>
                   <StatusIndicator type={it.ok ? "success" : "warning"}>
-                    {it.ok ? "Provisioned" : "Not found"}
+                    {it.ok ? t("settings.provisioned") : t("settings.notFound")}
                   </StatusIndicator>
                 </div>
               ))}
               {/* Fixed, not configurable: the vector index's dimensions are tied to it. */}
               {models?.embedding_model_id && (
                 <div>
-                  <Box variant="awsui-key-label">Embeddings model</Box>
+                  <Box variant="awsui-key-label">{t("settings.embeddingsModel")}</Box>
                   <Box variant="code">{models.embedding_model_id}</Box>
                 </div>
               )}
@@ -240,17 +244,17 @@ export default function Settings() {
         header={
           <Header
             variant="h2"
-            description="The model and settings each workload uses."
+            description={t("settings.modelsDescription")}
             actions={
-              models ? startupCheckSummary(models.workloads.map((m) => m.startup_check)) : null
+              models ? startupCheckSummary(models.workloads.map((m) => m.startup_check), t) : null
             }
           >
-            Models
+            {t("settings.models")}
           </Header>
         }
       >
         {!models ? (
-          <Alert type="error">Failed to load the model configuration.</Alert>
+          <Alert type="error">{t("settings.modelsFailed")}</Alert>
         ) : (
           <SpaceBetween size="m">
             <Table
@@ -260,7 +264,7 @@ export default function Settings() {
               columnDefinitions={[
                 {
                   id: "workload",
-                  header: "Workload",
+                  header: t("settings.colWorkload"),
                   cell: (r) => (
                     <div>
                       <Box fontWeight={r.isDefault ? "bold" : "normal"}>{r.label}</Box>
@@ -273,16 +277,13 @@ export default function Settings() {
                     </div>
                   ),
                 },
-                settingColumn("model_id", "Model"),
-                settingColumn("thinking", "Thinking"),
-                settingColumn("effort", "Effort"),
+                settingColumn("model_id", t("settings.colModel")),
+                settingColumn("thinking", t("settings.colThinking")),
+                settingColumn("effort", t("settings.colEffort")),
               ]}
             />
             <Box variant="small" color="text-body-secondary">
-              When thinking isn't set, Claude 5.x models think by default. Grey values
-              come from Default for all workloads, or aren't sent. Change any value with
-              the environment variables under its row; changes take effect when CodeKB
-              restarts.
+              {t("settings.modelsNote")}
             </Box>
           </SpaceBetween>
         )}
@@ -293,22 +294,21 @@ export default function Settings() {
         header={
           <Header
             variant="h2"
-            description="Repositories can be analyzed by URL only from these hosts."
+            description={t("settings.gitHostsDescription")}
           >
-            Allowed Git hosts
+            {t("settings.gitHosts")}
           </Header>
         }
       >
         {!config ? (
-          <Alert type="error">Failed to load the Git host configuration.</Alert>
+          <Alert type="error">{t("settings.gitHostsFailed")}</Alert>
         ) : config.allowed_git_hosts.length === 0 ? (
           <Alert type="warning">
-            No Git hosts are configured, so analyzing a repository by URL is disabled.
-            Set CODEKB_ALLOWED_GIT_HOSTS to enable it. Uploading a zip archive still works.
+            {t("settings.gitHostsEmpty")}
           </Alert>
         ) : (
           <SpaceBetween size="xs">
-            <Box variant="awsui-key-label">Permitted hosts</Box>
+            <Box variant="awsui-key-label">{t("settings.permittedHosts")}</Box>
             <SpaceBetween size="xs" direction="horizontal">
               {config.allowed_git_hosts.map((h) => (
                 <Badge key={h} color="blue">{h}</Badge>
@@ -323,14 +323,14 @@ export default function Settings() {
         header={
           <Header
             variant="h2"
-            description="New spaces are created with these exclusion patterns."
+            description={t("settings.exclusionDescription")}
           >
-            Exclusion patterns
+            {t("settings.exclusion")}
           </Header>
         }
       >
         {!config ? (
-          <Alert type="error">Failed to load the exclusion patterns.</Alert>
+          <Alert type="error">{t("settings.exclusionFailed")}</Alert>
         ) : (
           <Box variant="pre">{config.exclude_patterns.join("\n")}</Box>
         )}
@@ -338,8 +338,8 @@ export default function Settings() {
 
       {/* Only rendered for release builds, where the version was injected. */}
       {RELEASE_VERSION && (
-        <Container header={<Header variant="h2">About</Header>}>
-          <Box variant="awsui-key-label">Version</Box>
+        <Container header={<Header variant="h2">{t("settings.about")}</Header>}>
+          <Box variant="awsui-key-label">{t("settings.version")}</Box>
           <Box>{RELEASE_VERSION}</Box>
         </Container>
       )}

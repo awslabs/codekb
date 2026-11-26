@@ -17,6 +17,7 @@ from ..core.logging_utils import format_payload
 from ..core.prompt_spotlighting import build_prompt
 from ..core.bedrock_guardrail import GuardrailTarget, get_guardrail_kwargs
 from ..core.circuit_breaker import CircuitBreaker
+from ..core.language_directive import LanguageDirective, resolve_language_directive
 from ..core.llm_settings import (
     Workload,
     anthropic_request_fields,
@@ -51,12 +52,14 @@ class TopDownSummarizer:
         codekb_service: CodeKBService | None = None,
         on_progress: ProgressCallback | None = None,
         omit_low_business_relevance: bool = False,
+        language_directive: LanguageDirective | None = None,
     ):
         self.space_path = space_path
         self.space_id = space_id
         self.codekb_service = codekb_service or CodeKBService.instance()
         self.on_progress = on_progress
         self.omit_low_business_relevance = omit_low_business_relevance
+        self.language_directive = language_directive or resolve_language_directive(None)
         self.stats = {
             "total_analyzed": 0,
             "total_cached": 0,
@@ -370,6 +373,11 @@ IMPORTANT:
 6. Description text must be plain single-line text: do NOT use double-quote characters ("), newlines, tabs, or backslashes inside a description.
 
 Start your response with { and end with }"""
+
+        # Description text is human-readable; JSON keys (function IDs) are unaffected.
+        language_instruction = self.language_directive.instruction_line()
+        if language_instruction:
+            prompt += "\n\n" + language_instruction
 
         response = self._call_bedrock(prompt, call_graph_data)
         try:

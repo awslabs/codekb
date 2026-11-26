@@ -52,6 +52,20 @@ class CreateSpaceRequest(BaseModel):
         default=False,
         description="Skip low business relevance components during AI summarization",
     )
+    overview_language: str | None = Field(
+        default=None,
+        description=(
+            "Optional lowercase language subtag (e.g. 'en', 'ja') for generated "
+            "Space Overview documents. Set once at creation; not validated here."
+        ),
+    )
+    analysis_language: str | None = Field(
+        default=None,
+        description=(
+            "Optional lowercase language subtag (e.g. 'en', 'ja') for generated "
+            "analysis descriptions. Set once at creation; not validated here."
+        ),
+    )
 
 
 class UploadUrlRequest(BaseModel):
@@ -74,6 +88,20 @@ class StartUploadAnalysisRequest(BaseModel):
     omit_low_business_relevance: bool = Field(
         default=False,
         description="Skip low business relevance components during AI summarization",
+    )
+    overview_language: str | None = Field(
+        default=None,
+        description=(
+            "Optional lowercase language subtag (e.g. 'en', 'ja') for generated "
+            "Space Overview documents. Set once at creation; not validated here."
+        ),
+    )
+    analysis_language: str | None = Field(
+        default=None,
+        description=(
+            "Optional lowercase language subtag (e.g. 'en', 'ja') for generated "
+            "analysis descriptions. Set once at creation; not validated here."
+        ),
     )
 
 
@@ -108,6 +136,8 @@ class SpaceDetail(BaseModel):
     component_count: int
     created_at: str | None = None
     created_by: str | None = None
+    overview_language: str | None = None
+    analysis_language: str | None = None
     version: str
     statistics: dict
     vector_count: int = 0
@@ -168,6 +198,8 @@ async def create_space(body: CreateSpaceRequest, request: Request) -> dict:
             created_by=user.email,
             actor_sub=user.sub,
             visibility=visibility,
+            overview_language=body.overview_language,
+            analysis_language=body.analysis_language,
         )
         return result
     except ServiceError as e:
@@ -208,6 +240,8 @@ async def start_upload_analysis(body: StartUploadAnalysisRequest, request: Reque
             omit_low_business_relevance=body.omit_low_business_relevance,
             created_by=user.email,
             actor_sub=user.sub,
+            overview_language=body.overview_language,
+            analysis_language=body.analysis_language,
         )
         return result
     except ServiceError as e:
