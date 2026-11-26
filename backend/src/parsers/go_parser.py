@@ -188,8 +188,9 @@ class GoParser(BaseLanguageParser):
             if not method_name or not receiver_type:
                 return None
 
-            # Component ID includes receiver type: User.Activate
-            component_id = self.make_id(file_path, f"{receiver_type}.{method_name}")
+            # parent is needed for Type.Method lookups; id stays file.Type.Method
+            receiver_id = self.make_id(file_path, receiver_type)
+            component_id = self.make_id(file_path, method_name, receiver_id)
 
             parameters = self.extract_function_parameters(node, source_lines)
 
@@ -209,7 +210,7 @@ class GoParser(BaseLanguageParser):
                 file_path,
                 "go",
                 attributes,
-                parent_component,
+                receiver_id,
             )
         except Exception:
             return None
@@ -221,13 +222,16 @@ class GoParser(BaseLanguageParser):
                 if child.type == "parameter_declaration":
                     # Look for type_identifier or pointer_type
                     for subchild in child.children:
-                        if subchild.type == "type_identifier":
-                            return self._get_node_text(subchild, source_lines)
-                        elif subchild.type == "pointer_type":
-                            # Handle *User -> User
-                            for type_child in subchild.children:
-                                if type_child.type == "type_identifier":
-                                    return self._get_node_text(type_child, source_lines)
+                        # User, *User, Stack[T], *Stack[T]
+                        type_node = subchild
+                        if type_node.type == "pointer_type":
+                            type_node = next(
+                                (c for c in type_node.children if c.is_named), type_node
+                            )
+                        if type_node.type == "generic_type":
+                            type_node = type_node.child_by_field_name("type") or type_node
+                        if type_node.type == "type_identifier":
+                            return self._get_node_text(type_node, source_lines)
         except Exception:
             pass
         return None
