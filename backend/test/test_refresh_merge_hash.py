@@ -316,3 +316,27 @@ def test_stale_callers_stop_at_the_prompt_hop_limit():
     orch._step_merge()
 
     assert orch._refresh_plan.stale_caller_ids == frozenset({"space::S.c", "space::S.b"})
+
+
+def test_a_constructor_caller_is_not_a_stale_caller():
+    """S.S (constructor) and S.b both call R.save; only S.b has a description to refresh."""
+    kb = KnowledgeBase(
+        source_directory=Path("/repo"),
+        space_id="space",
+        components=[
+            _comp("space::R.save", "R.java", content_hash="hs"),
+            _comp("space::S.S", "S.java", content_hash="hS", comp_type=ComponentType.CONSTRUCTOR),
+            _comp("space::S.b", "S.java", content_hash="hb"),
+        ],
+        call_graph={
+            "space::S.S": [["space::R.save", 1]],
+            "space::S.b": [["space::R.save", 1]],
+        },
+    )
+    orch = _make_orchestrator(kb)
+    orch._file_changes = [FileChange("R.java", ChangeType.MODIFIED)]
+    orch._parsed_components = [_comp("space::R.save", "R.java", content_hash="hs2")]
+
+    orch._step_merge()
+
+    assert orch._refresh_plan.stale_caller_ids == frozenset({"space::S.b"})

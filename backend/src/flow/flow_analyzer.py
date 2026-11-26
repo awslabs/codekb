@@ -76,6 +76,13 @@ logger = get_logger(__name__)
 # Languages where an unqualified call inside a class can name another member of it.
 _BARE_CALLS_REACH_MEMBERS = frozenset({"java", "csharp", "cpp", "kotlin", "dart", "c"})
 
+# Component types with a body that can hold calls: the nodes of the call graph.
+# Summarization covers functions and methods only (get_call_depths and its
+# consumers), so a constructor gets edges, not a description.
+_CALL_GRAPH_NODE_TYPES = frozenset(
+    {ComponentType.FUNCTION, ComponentType.METHOD, ComponentType.CONSTRUCTOR}
+)
+
 
 class FlowAnalyzer(IFlowAnalyzer):
     """
@@ -130,11 +137,8 @@ class FlowAnalyzer(IFlowAnalyzer):
             Dictionary mapping component names to their called components (for backward compatibility)
         """
         with ErrorContext(logger, "build call graph"):
-            # Filter components to only include functions and methods
             callable_components = [
-                comp
-                for comp in components
-                if comp.type in [ComponentType.FUNCTION, ComponentType.METHOD]
+                comp for comp in components if comp.type in _CALL_GRAPH_NODE_TYPES
             ]
             logger.info(
                 f"Building call graph for {len(callable_components)} callable components (filtered from {len(components)} total)"
@@ -255,7 +259,7 @@ class FlowAnalyzer(IFlowAnalyzer):
 
             if component not in self._call_graph:
                 # Component exists in catalog but not in the call graph
-                # (e.g. classes, variables — only functions/methods have call graph entries).
+                # (e.g. classes, variables — only callables have call graph entries).
                 # Return an empty analysis instead of raising.
                 return DependencyAnalysis(component=component)
 
@@ -415,17 +419,14 @@ class FlowAnalyzer(IFlowAnalyzer):
             if simple_name not in component_lookup:
                 component_lookup[simple_name] = comp.id
 
-            if (
-                comp.type == ComponentType.CONSTRUCTOR
-                and comp.language == "dart"
-                and comp.parent_component
-            ):
-                # Dart alone calls a constructor by a name other than its class's:
-                # `Store.named(1)`, and `Store()` whose member name is `new`.
-                # Without both keys the resolver matches nothing and the edge is lost.
+            if comp.type == ComponentType.CONSTRUCTOR and comp.parent_component:
+                # A constructor can be called by `Class.name`: Dart `Store.named(1)`,
+                # PHP `parent::__construct()` (named after the base class by the
+                # parser). Dart alone also reaches the unnamed constructor, whose
+                # member name is `new`, by the class name: `Store()`.
                 class_name = comp.parent_component.split(".")[-1]
                 component_lookup[f"{class_name}.{simple_name}"] = comp.id
-                if simple_name == "new":
+                if comp.language == "dart" and simple_name == "new":
                     component_lookup[class_name] = comp.id
 
             if comp.type == ComponentType.METHOD and comp.parent_component:
