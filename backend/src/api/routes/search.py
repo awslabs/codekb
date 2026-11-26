@@ -12,10 +12,35 @@ from ...authz.scope import resolve_scope
 from ...authz.startup import require_authorization
 from ...service.codekb_service import CodeKBService
 from ..auth import current_auth_context, require_current_user
+from ..display import attach_search_display_names
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _enrich_with_display_names(svc: CodeKBService, results: list[dict]) -> list[dict]:
+    """Attach the UI-only ``display_name`` to global-search results in place.
+
+    Results span spaces, so catalog metadata (for accurate Terraform / Dart
+    labels) is gathered per distinct ``metadata.space_id``. A space that cannot
+    be loaded falls back to id-only derivation for its results. UI-only: this
+    runs in the REST route, never in the shared service.
+    """
+    meta_by_id: dict[str, dict] = {}
+    space_ids = {
+        (r.get("metadata") or {}).get("space_id")
+        for r in results
+        if (r.get("metadata") or {}).get("space_id")
+    }
+    for sid in space_ids:
+        try:
+            for component in svc.list_components(sid):
+                meta_by_id[component["id"]] = component
+        except Exception:
+            # Missing/unreadable space → its results use id-only derivation.
+            logger.debug("display_name enrichment skipped catalog for space %s", sid)
+    return attach_search_display_names(results, meta_by_id)
 
 
 @router.get("")
@@ -57,7 +82,7 @@ async def global_semantic_search(
         except Exception as e:
             logger.error(f"Global search failed for q='{q}': {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Search failed")
-        return results
+        return await asyncio.to_thread(_enrich_with_display_names, svc, results)
 
     # Authorization off — unchanged behaviour (plain list, scope as requested).
     logger.info(f"GET /search q={q!r}, limit={limit}, spaces={requested}, user={user.sub}")
@@ -66,7 +91,7 @@ async def global_semantic_search(
             svc.global_semantic_search, q, n_results=limit, space_ids=requested
         )
         logger.info(f"GET /search returned {len(results)} result(s) for q={q!r}")
-        return results
+        return await asyncio.to_thread(_enrich_with_display_names, svc, results)
     except Exception as e:
         logger.error(f"Global search failed for q='{q}', spaces={requested}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Search failed")

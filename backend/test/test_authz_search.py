@@ -63,7 +63,9 @@ def test_search_scopes_to_readable_spaces():
     finally:
         _exit(patches)
     assert resp.status_code == 200
-    assert resp.json() == [{"key": "c1"}]
+    # The route attaches the UI-only display_name (id-derived; a key with no
+    # qualifier chain renders as itself). The result otherwise passes through.
+    assert resp.json() == [{"key": "c1", "display_name": "c1"}]
     svc.global_semantic_search.assert_called_once_with("payments", None, ["s1", "s2"])
 
 

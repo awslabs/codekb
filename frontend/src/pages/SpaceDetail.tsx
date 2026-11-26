@@ -1419,9 +1419,9 @@ export default function SpaceDetail() {
                 </div>
               }
               columnDefinitions={[
-                { id: "key", header: "Component ID", cell: (item) => {
+                { id: "key", header: "Component", cell: (item) => {
                   const name = item.key ?? "";
-                  return <Button variant="inline-link" onClick={() => handleSelectSemantic(name)}>{name}</Button>;
+                  return <Button variant="inline-link" onClick={() => handleSelectSemantic(name)}>{item.display_name ?? name}</Button>;
                 }},
                 { id: "type", header: "Type", cell: (item) => item.metadata?.type ?? "—" },
                 { id: "space", header: "Space", cell: (item) => item.metadata?.space_id ?? "—" },
