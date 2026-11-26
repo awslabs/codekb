@@ -32,7 +32,7 @@ from typing import Any, Callable, List, Optional, Set, Tuple
 NodeTextFn = Callable[[Any], str]
 
 # tree-sitter-typescript node types.
-_CLASS_NODE_TYPES = frozenset({"class_declaration", "class"})
+_CLASS_NODE_TYPES = frozenset({"class_declaration", "class", "abstract_class_declaration"})
 _CLASS_BODY = "class_body"
 _CLASS_NAME = "type_identifier"
 _FIELD_DEFINITION = "public_field_definition"
