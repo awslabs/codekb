@@ -1377,7 +1377,7 @@ export default function SpaceDetail() {
                   </div>
                 }
                 columnDefinitions={[
-                  { id: "name", header: "Name", cell: (item) => <Button variant="inline-link" onClick={() => handleSelectSyntactic(item.name)}>{item.name}</Button>, sortingField: "name" },
+                  { id: "name", header: "Name", cell: (item) => <Button variant="inline-link" onClick={() => handleSelectSyntactic(item.name)}>{item.display_name ?? item.name}</Button>, sortingField: "name" },
                   { id: "type", header: "Type", cell: (item) => item.type },
                   { id: "language", header: "Language", cell: (item) => item.language },
                   ...(showBusinessRelevance ? [{ id: "relevance", header: "Business relevance", cell: (item: Record<string, any>) => <BusinessRelevanceSummary behavior={item.business_behavior} /> }] : []),
@@ -2073,6 +2073,11 @@ function ComponentDetail({ component, flowData, depsData, loading, flowLoading, 
   const nonCallableReason = `Not available for ${component.type ?? "this"} components — only functions, methods, and constructors can be traced.`;
   const directDependencies = uniqueStrings(depsData?.direct_dependencies);
   const dependents = uniqueStrings(depsData?.dependents);
+  // UI-only labels keyed by component id. The backend attaches display_name
+  // (single component) or a display_names id→label map (flow / deps). Ids stay
+  // the lookup key everywhere; only the rendered label changes.
+  const flowDisplayNames: Record<string, string> = flowData?.display_names ?? {};
+  const depsDisplayNames: Record<string, string> = depsData?.display_names ?? {};
 
   return (
     <Container header={<Header variant="h2" actions={
@@ -2093,7 +2098,7 @@ function ComponentDetail({ component, flowData, depsData, loading, flowLoading, 
         >
           Show dependencies
         </Button>
-      </SpaceBetween>}>{component.name}</Header>}>
+      </SpaceBetween>}>{component.display_name ?? component.name}</Header>}>
       <SpaceBetween size="l">
         <ColumnLayout columns={3}>
           <div><Box variant="awsui-key-label">Type</Box><div>{component.type}</div></div>
@@ -2110,7 +2115,7 @@ function ComponentDetail({ component, flowData, depsData, loading, flowLoading, 
           <ExpandableSection headerText={`Execution flow (${flowData.flow_steps?.length ?? 0} steps)`} defaultExpanded>
             <div style={{ maxHeight: "400px", overflow: "auto", background: "#0f1b2a", borderRadius: "8px", padding: "16px" }}>
               <pre style={{ margin: 0, color: "#d1d5db", fontSize: "13px", fontFamily: "'Amazon Ember Mono', monospace" }}>
-                {flowData.flow_steps?.map((s: any, i: number) => `${"  ".repeat(s.depth ?? 0)}${i + 1}. ${s.caller} → ${s.component}`).join("\n") || "No flow steps"}
+                {flowData.flow_steps?.map((s: any, i: number) => `${"  ".repeat(s.depth ?? 0)}${i + 1}. ${flowDisplayNames[s.caller] ?? s.caller} → ${flowDisplayNames[s.component] ?? s.component}`).join("\n") || "No flow steps"}
               </pre>
             </div>
           </ExpandableSection>
@@ -2121,14 +2126,14 @@ function ComponentDetail({ component, flowData, depsData, loading, flowLoading, 
               <div>
                 <Box variant="awsui-key-label">Direct dependencies ({directDependencies.length})</Box>
                 <SpaceBetween size="xxs">
-                  {directDependencies.map((d: string) => <Box key={d} variant="code" fontSize="body-s">{d}</Box>)}
+                  {directDependencies.map((d: string) => <Box key={d} variant="code" fontSize="body-s">{depsDisplayNames[d] ?? d}</Box>)}
                   {directDependencies.length === 0 && <Box color="text-body-secondary">None</Box>}
                 </SpaceBetween>
               </div>
               <div>
                 <Box variant="awsui-key-label">Dependents ({dependents.length})</Box>
                 <SpaceBetween size="xxs">
-                  {dependents.map((d: string) => <Box key={d} variant="code" fontSize="body-s">{d}</Box>)}
+                  {dependents.map((d: string) => <Box key={d} variant="code" fontSize="body-s">{depsDisplayNames[d] ?? d}</Box>)}
                   {dependents.length === 0 && <Box color="text-body-secondary">None</Box>}
                 </SpaceBetween>
               </div>
