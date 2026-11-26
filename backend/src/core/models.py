@@ -130,6 +130,76 @@ def _terraform_address(local_id: str) -> str:
     return NAME_SEP.join(parts[-2:])
 
 
+def derive_display_name(
+    local_id: str,
+    language: str,
+    parent_component: Optional[str] = None,
+    accessor_kind: Optional[str] = None,
+) -> str:
+    """Derive a human-friendly, parent-qualified display label from a component id.
+
+    UI-ONLY. This is a render helper for the REST layer: it is never persisted,
+    never returned by the service or MCP layers, and never used as a lookup key.
+    Once the file-prefix segment is dropped the label is no longer unique, so
+    only ``id`` keys a lookup — an LLM must never chain tools on this value.
+
+    The label is the parent-qualified simple name: the file-prefix segment
+    (``stem<hash>`` / ``stem_hash``) and any ``#<disambiguator>`` overload suffix
+    are stripped, while the intermediate class/namespace chain is KEPT. Examples:
+    ``main<00aa5e9d7bfc>.Repo.Save#a1b2`` -> ``Repo.Save``; a top-level function
+    ``main<hash>.parseArgs`` -> ``parseArgs``.
+
+    It reuses exactly the splitting and quirk handling of
+    ``Component.get_simple_name`` — the ``SPACE_SEP``/``NAME_SEP``/``DISAMBIG_SEP``
+    separators, the Terraform ``_terraform_address`` form, and the Dart accessor
+    stepping — so the two can never drift apart. The one intended difference is
+    that the qualifier chain between the file prefix and the bare name is
+    retained rather than discarded.
+
+    The arguments are exactly the fields a serialized component dict already
+    carries (``id``, ``language``, ``parent_component``, ``attributes.accessor_kind``),
+    so a route can call this on the service's returned dict without re-hydrating
+    a ``Component``.
+    """
+    local = local_id.split(SPACE_SEP, 1)[-1]
+
+    # Terraform ids display their reference address, exactly as get_simple_name
+    # returns for terraform. There is no file-prefixed qualifier chain to keep.
+    if language == "terraform":
+        return _terraform_address(local)
+
+    segments = local.split(NAME_SEP)
+
+    # Inclusive index of the last segment that is part of the name. For a Dart
+    # accessor the trailing `.get`/`.set` kind suffix is stepped over, mirroring
+    # get_simple_name: accessor_kind answers it outright, and for a record
+    # persisted before that field existed the id's shape against its parent does
+    # (a member is parent + one segment, an accessor parent + two).
+    end = len(segments) - 1
+    if language == "dart" and len(segments) >= 2:
+        if accessor_kind is not None:
+            end = len(segments) - 2
+        elif segments[-1] in ("get", "set"):
+            parent_local = (parent_component or "").split(SPACE_SEP, 1)[-1]
+            if parent_local and local.startswith(f"{parent_local}{NAME_SEP}"):
+                remainder = local[len(parent_local) + 1 :]
+                # `label.get` is an accessor; a bare `get` is the member's name.
+                if NAME_SEP in remainder:
+                    end = len(segments) - 2
+
+    # Strip an overload discriminator from the trailing segment, as
+    # get_simple_name does (harmless when that segment is an accessor suffix
+    # that the slice below drops anyway).
+    segments[-1] = segments[-1].split(DISAMBIG_SEP, 1)[0]
+
+    # Drop the leading file-prefix segment but KEEP the intermediate qualifier
+    # chain. A single-segment id has no prefix to drop.
+    start = 1 if len(segments) > 1 else 0
+    if start > end:
+        start = end
+    return NAME_SEP.join(segments[start : end + 1])
+
+
 class ComponentType(Enum):
     """Enumeration of supported component types."""
 
