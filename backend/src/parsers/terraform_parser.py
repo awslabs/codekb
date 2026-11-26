@@ -243,20 +243,21 @@ class TerraformParser(BaseLanguageParser):
         a module, so using it as the id verbatim makes the same address in
         different stacks overwrite each other (whole stacks were lost this way).
         Prefix the id with the file's scheme prefix (the V2 path hash) so stacks
-        stay distinct, and keep the bare address as the display name — which is
-        also the key references resolve against (`get_simple_name` returns it).
+        stay distinct. The address stays at the end of the id, which is where
+        `Component.get_simple_name` reads it back as the key references resolve
+        against.
 
         Only V2 spaces are prefixed. Legacy V1 spaces keep address-only ids
-        (and no separate display name) exactly as before, and adopt the prefixed
-        form only on a deliberate full V2 reindex — the same per-space scheme
-        rule every other language follows.
+        exactly as before, and adopt the prefixed form only on a deliberate
+        full V2 reindex — the same per-space scheme rule every other language
+        follows.
         """
         if self._scheme != IdScheme.V2_PATH:
             return self._create_component(
                 address, component_type, node, file_path, "terraform", attributes
             )
 
-        component = self._create_component(
+        return self._create_component(
             self.make_id(file_path, address),
             component_type,
             node,
@@ -264,8 +265,6 @@ class TerraformParser(BaseLanguageParser):
             "terraform",
             attributes,
         )
-        component._name = address
-        return component
 
     @staticmethod
     def _build_address(kind: str, labels: List[str]) -> Optional[str]:

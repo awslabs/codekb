@@ -6,6 +6,7 @@ from typing import Optional
 from mcp.server.fastmcp import Context
 
 from ...service.codekb_service import CodeKBService
+from ...core.models import SPACE_SEP
 from ...core.prompt_spotlighting import wrap_external, wrap_external_fields
 from .common import (
     filter_readable_spaces,
@@ -53,11 +54,14 @@ async def search_components(pattern: str, raw_output: bool = False, ctx: Context
         raw_output: If True, returns machine-readable format; if False, human-readable
     """
     codekb_service = CodeKBService.instance()
-    sid, search_pattern = parse_component_input(pattern)
+    sid, qualified = parse_component_input(pattern)
+    # The "space_id::" prefix only selects the space. Match the rest against
+    # component ids, the same way the UI route does.
+    search_pattern = qualified.split(SPACE_SEP, 1)[1]
     await asyncio.to_thread(gate_space_read, ctx, sid)
     results = codekb_service.search_components(sid, search_pattern)
     if not results:
-        return f"No components matching '{search_pattern}'"
+        return f"No components matching '{pattern}'"
     if raw_output:
         return json.dumps(wrap_external_fields(results), default=str)
     return _format_component_list(results)

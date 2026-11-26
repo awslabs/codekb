@@ -195,12 +195,13 @@ export default function GlobalSearch() {
             header: "Component",
             cell: (item) => {
               const spaceId = item.metadata?.space_id;
+              const label = item.display_name ?? item.key;
               return spaceId ? (
                 <Link onFollow={(e) => { e.preventDefault(); navigate(`/spaces/${spaceId}`); }}>
-                  <Box variant="code">{item.key}</Box>
+                  <Box variant="code">{label}</Box>
                 </Link>
               ) : (
-                <Box variant="code">{item.key}</Box>
+                <Box variant="code">{label}</Box>
               );
             },
             sortingField: "key",

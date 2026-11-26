@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import re
 import subprocess
 import tarfile
 import time
@@ -24,6 +25,7 @@ from ..core.models import (
     ChangeType,
     Component,
     FileChange,
+    IdScheme,
     KnowledgeBase,
     ParseFailureReport,
     RefreshPlan,
@@ -42,6 +44,24 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _DART_SUFFIX = ".dart"
+
+# The V2 path-hash prefix produced by path_prefix(): `stem<012345678abc>`.
+# Both forms carry the identical 12-hex digest; only the separator differs,
+# so rewriting `<digest>` to `_digest` yields the legacy id for the same path.
+# The digest sits in the file prefix, before the first address dot, so dotted
+# file stems (e.g. `network.prod<hash>`) and dotted member/overload suffixes
+# (`.parseArgs#0674`) are untouched. `<>` appears nowhere else in an id.
+_PATH_HASH_RE = re.compile(r"<([0-9a-f]{12})>")
+
+
+def _legacy_prefix_id(local_id: str) -> str:
+    """Rewrite the new `stem<digest>` prefix to the legacy `stem_digest` form.
+
+    Rewrites only the first `<{12 hex}>` occurrence (the path-hash prefix).
+    Ids without that pattern — V1 ids and ids already in legacy form — are
+    returned unchanged.
+    """
+    return _PATH_HASH_RE.sub(r"_\1", local_id, count=1)
 
 
 def _repo_relative_path(file_path: Path) -> Path:
@@ -1196,6 +1216,43 @@ class RefreshOrchestrator:
         from .content_hash import backfill_component_hashes
 
         backfill_component_hashes(clone_dir, parsed_components)
+
+        # Id continuity for V2 spaces: path_prefix() now mints the `stem<digest>`
+        # form, but a space indexed before this change holds `stem_digest` ids.
+        # For each freshly-parsed component whose legacy `_`-form id already
+        # exists in the prior KB, rewrite its id back to that prior string so the
+        # delta merge (prior_by_id exact-id lookup) still matches it — preserving
+        # content hashes, carried-forward descriptions, relevance tiers, and
+        # vector reconciliation. Genuinely new symbols have no prior id and keep
+        # their new `<>` form. V1 spaces never carry `<digest>`, so the rewrite is
+        # a no-op; the full-index creation path has no prior KB and is skipped.
+        # parent_component is rewritten on the same rule and independently of the
+        # component's own id: a NEW symbol added to a pre-existing (reconciled)
+        # parent keeps its own `<>` id but must point at the parent's legacy id,
+        # because the call-graph scoped-lookup matches parent_component against
+        # exact component ids (_build_scoped_lookup) — a stale `<>` parent would
+        # drop that symbol's scoped edges.
+        if scheme is IdScheme.V2_PATH and prior_kb is not None:
+            prior_ids = {comp.id for comp in prior_kb.components}
+            reconciled = 0
+            for component in parsed_components:
+                legacy_id = _legacy_prefix_id(component.id)
+                if legacy_id != component.id and legacy_id in prior_ids:
+                    component.id = legacy_id
+                    reconciled += 1
+                parent = component.parent_component
+                if parent:
+                    legacy_parent = _legacy_prefix_id(parent)
+                    if legacy_parent != parent and legacy_parent in prior_ids:
+                        component.parent_component = legacy_parent
+            logger.info(
+                "refresh.parse_changed.id_reconciled",
+                extra={
+                    "space_id": self.space_id,
+                    "reused_prior_ids": reconciled,
+                    "parsed_components": len(parsed_components),
+                },
+            )
 
         self._parsed_components = parsed_components
         self._parse_failure_reports = failure_reports
