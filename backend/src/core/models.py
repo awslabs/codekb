@@ -85,7 +85,7 @@ def path_prefix(file_path: Path, root: Optional[Path]) -> str:
     else:
         rel_posix = file_path.name
     digest = hashlib.sha1(rel_posix.encode("utf-8")).hexdigest()[:12]
-    return f"{file_path.stem}_{digest}"
+    return f"{file_path.stem}<{digest}>"
 
 
 def qualify(space_id: str, local_id: str) -> str:

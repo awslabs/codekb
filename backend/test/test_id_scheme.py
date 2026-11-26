@@ -1,6 +1,7 @@
 """Tests for the component-id scheme: construction, read helpers, and the
 per-space backward-compatibility contract (legacy V1 vs collision-free V2)."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -113,9 +114,11 @@ def test_top_level_id_passthrough_is_verbatim():
 
 
 def test_path_prefix_keeps_readable_stem():
-    # V2 prefix stays partially human-readable: "<stem>_<hash>".
+    # V2 prefix stays partially human-readable: "<stem><<hash>>".
     prefix = path_prefix(Path("/repo/foo/service.py"), Path("/repo"))
-    assert prefix.startswith("service_")
+    assert prefix.startswith("service<")
+    assert prefix.endswith(">")
+    assert re.fullmatch(r"service<[0-9a-f]{12}>", prefix)
 
 
 # ── Component.name: always the id ───────────────────────────────────────────
