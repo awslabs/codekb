@@ -48,7 +48,7 @@
   },
   "spaceForm": {
     "outputLanguageLabel": "Output language",
-    "outputLanguageDescription": "Language for this space's generated overview and analysis output. Independent of the UI display language and set once at creation."
+    "outputLanguageDescription": "Language for this space's generated overview and analysis output. Independent of the UI display language. The overview language can be changed later when regenerating the overview."
   },
   "agentChat": {
     "tokensBadge": "{{total}} tokens",
@@ -904,6 +904,7 @@
     "overviewDesc": "AI-generated documentation summarizing this codebase. Regenerating deletes the current documents and rebuilds them from scratch.",
     "copyAsMarkdown": "Copy as Markdown",
     "regenerate": "Regenerate",
+    "overviewLanguageLabel": "Overview language",
     "regeneratingStatus": "Regenerating Space Overview… existing documents are being rebuilt from scratch.",
     "viewDoc": "View {{title}}",
     "loadDocFailed": "Failed to load this document.",

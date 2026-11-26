@@ -2286,12 +2286,18 @@ class CodeKBService:
         """True when a conditional S3 write lost the race (another writer won)."""
         return err.response.get("Error", {}).get("Code") == "PreconditionFailed"
 
-    def start_overview_generation(self, space_id: str) -> dict[str, Any]:
+    def start_overview_generation(
+        self, space_id: str, overview_language: str | None = None
+    ) -> dict[str, Any]:
         """Trigger Space Overview generation for an existing READY space.
 
         Runs in a background thread. Returns immediately with status. Raises
         ServiceError if the space is not READY, or OverviewInProgressError (409)
         if a generation run is already active for this space.
+
+        ``overview_language``, when set, replaces the space's stored overview
+        language in the same conditional claim write, so this run and later
+        ones use it. A refused request leaves the setting unchanged.
         """
         status, etag = self._read_status_with_etag(space_id)
         if not status:
@@ -2321,6 +2327,8 @@ class CodeKBService:
             status["overview_done"] = 0
             status["overview_total"] = 0
             status["overview_percent"] = 0.0
+            if overview_language is not None:
+                status["overview_language"] = overview_language
             status["updated_at"] = datetime.now(timezone.utc).isoformat()
             try:
                 self._write_status(space_id, status, if_match=etag)
@@ -2427,7 +2435,8 @@ class CodeKBService:
             final_data["omit_low_business_relevance"] = existing_status[
                 "omit_low_business_relevance"
             ]
-        # Set once at creation; the rebuild above would otherwise drop them.
+        # Set at creation (overview_language can be changed by an Overview
+        # regeneration); the rebuild above would otherwise drop them.
         for _lang_field in ("overview_language", "analysis_language"):
             if _lang_field in existing_status:
                 final_data[_lang_field] = existing_status[_lang_field]

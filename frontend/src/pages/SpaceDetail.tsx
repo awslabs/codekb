@@ -40,6 +40,7 @@ import { useDefaultTopK } from "../hooks/useSearchDefaults";
 import MermaidBlock from "../components/MermaidBlock";
 import CodeBlock, { languageFromPath } from "../components/CodeBlock";
 import CopyButton from "../components/CopyButton";
+import { SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE } from "../i18n/languages";
 import "../styles/markdown.css";
 
 const TYPE_OPTIONS = [
@@ -133,6 +134,21 @@ export default function SpaceDetail() {
   const [overviewLoadFailed, setOverviewLoadFailed] = useState<Record<string, boolean>>({});
   const [activeOverviewDoc, setActiveOverviewDoc] = useState<string | null>(null);
   const [overviewSubmitting, setOverviewSubmitting] = useState(false);
+  // Output language for the next Overview (re)generation. Starts at the space's
+  // stored setting; sent with the generate request, which also saves it.
+  const overviewLanguageOptions = SUPPORTED_LANGUAGES.map((l) => ({
+    label: l.displayName,
+    value: l.languageCode as string,
+  }));
+  const [overviewLanguage, setOverviewLanguage] = useState<string>(DEFAULT_LANGUAGE);
+  const storedOverviewLanguage = space?.overview_language;
+  useEffect(() => {
+    setOverviewLanguage(
+      SUPPORTED_LANGUAGES.some((l) => l.languageCode === storedOverviewLanguage)
+        ? (storedOverviewLanguage as string)
+        : DEFAULT_LANGUAGE
+    );
+  }, [storedOverviewLanguage]);
   const [overviewEnabled, setOverviewEnabled] = useState(true);
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTabId, setActiveTabId] = useState(() => searchParams.get("tab") || "codebase");
@@ -423,7 +439,8 @@ export default function SpaceDetail() {
     if (!spaceId || overviewGenerating || isRefreshing) return;
     setOverviewSubmitting(true);
     try {
-      await api.generateOverview(spaceId);
+      await api.generateOverview(spaceId, overviewLanguage);
+      setSpace((prev) => (prev ? { ...prev, overview_language: overviewLanguage } : prev));
       setOverviewDocs({});
       setOverviewLoadFailed({});
       setActiveOverviewDoc(null);
@@ -852,7 +869,8 @@ export default function SpaceDetail() {
           onClick={async () => {
             if (!spaceId) return;
             try {
-              await api.generateOverview(spaceId);
+              await api.generateOverview(spaceId, overviewLanguage);
+              setSpace((prev) => (prev ? { ...prev, overview_language: overviewLanguage } : prev));
               await loadStatus();
             } catch (e: any) {
               showError(t("spaceDetail.errStartOverview", { message: e.message }));
@@ -1168,6 +1186,18 @@ export default function SpaceDetail() {
                       text={combinedOverviewMd}
                       disabled={!allOverviewDocsLoaded || overviewGenerating}
                     />
+                    <Select
+                      selectedOption={
+                        overviewLanguageOptions.find((o) => o.value === overviewLanguage) ??
+                        overviewLanguageOptions[0]
+                      }
+                      onChange={({ detail }) =>
+                        setOverviewLanguage(detail.selectedOption.value ?? DEFAULT_LANGUAGE)
+                      }
+                      options={overviewLanguageOptions}
+                      disabled={overviewGenerating || isRefreshing}
+                      ariaLabel={t("spaceDetail.overviewLanguageLabel")}
+                    />
                     <Button
                       iconName="refresh"
                       loading={overviewGenerating}
@@ -1295,6 +1325,19 @@ export default function SpaceDetail() {
                   description={t("spaceDetail.generateDesc")}
                   actions={
                     !overviewGenerating ? (
+                      <SpaceBetween direction="horizontal" size="xs">
+                      <Select
+                        selectedOption={
+                          overviewLanguageOptions.find((o) => o.value === overviewLanguage) ??
+                          overviewLanguageOptions[0]
+                        }
+                        onChange={({ detail }) =>
+                          setOverviewLanguage(detail.selectedOption.value ?? DEFAULT_LANGUAGE)
+                        }
+                        options={overviewLanguageOptions}
+                        disabled={overviewGenerating || isRefreshing}
+                        ariaLabel={t("spaceDetail.overviewLanguageLabel")}
+                      />
                       <Button
                         variant="primary"
                         iconName="gen-ai"
@@ -1309,6 +1352,7 @@ export default function SpaceDetail() {
                       >
                         {t("spaceDetail.generateOverview")}
                       </Button>
+                      </SpaceBetween>
                     ) : undefined
                   }
                 >

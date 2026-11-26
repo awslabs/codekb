@@ -56,7 +56,8 @@ class CreateSpaceRequest(BaseModel):
         default=None,
         description=(
             "Optional lowercase language subtag (e.g. 'en', 'ja') for generated "
-            "Space Overview documents. Set once at creation; not validated here."
+            "Space Overview documents. Can be changed later through "
+            "POST /spaces/{id}/generate-overview; not validated here."
         ),
     )
     analysis_language: str | None = Field(
@@ -93,7 +94,8 @@ class StartUploadAnalysisRequest(BaseModel):
         default=None,
         description=(
             "Optional lowercase language subtag (e.g. 'en', 'ja') for generated "
-            "Space Overview documents. Set once at creation; not validated here."
+            "Space Overview documents. Can be changed later through "
+            "POST /spaces/{id}/generate-overview; not validated here."
         ),
     )
     analysis_language: str | None = Field(

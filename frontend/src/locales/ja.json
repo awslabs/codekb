@@ -48,7 +48,7 @@
   },
   "spaceForm": {
     "outputLanguageLabel": "出力言語",
-    "outputLanguageDescription": "このスペースで生成する概要と解析結果の言語です。UI の表示言語とは別に、作成時に一度だけ設定します。"
+    "outputLanguageDescription": "このスペースで生成する概要と解析結果の言語です。UI の表示言語とは別に設定します。概要の言語は、あとで概要を再生成するときに変更できます。"
   },
   "agentChat": {
     "tokensBadge": "{{total}} トークン",
@@ -904,6 +904,7 @@
     "overviewDesc": "このコードベースを要約した AI 生成のドキュメントです。再生成すると、現在のドキュメントを削除して一から作り直します。",
     "copyAsMarkdown": "Markdown としてコピー",
     "regenerate": "再生成",
+    "overviewLanguageLabel": "概要の言語",
     "regeneratingStatus": "スペース概要を再生成しています… 既存のドキュメントを一から作り直しています。",
     "viewDoc": "{{title}} を表示",
     "loadDocFailed": "このドキュメントを読み込めませんでした。",

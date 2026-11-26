@@ -554,8 +554,13 @@ export const api = {
       { method: "POST", body: JSON.stringify({ message, space_ids: spaceIds }) },
     ),
 
-  generateOverview: (id: string) =>
-    request<Record<string, any>>(`/spaces/${id}/generate-overview`, { method: "POST" }),
+  generateOverview: (id: string, overviewLanguage?: string) =>
+    request<Record<string, any>>(`/spaces/${id}/generate-overview`, {
+      method: "POST",
+      ...(overviewLanguage
+        ? { body: JSON.stringify({ overview_language: overviewLanguage }) }
+        : {}),
+    }),
 
   agentChatStream: (spaceIds: string[], message: string): EventSource | null => {
     // SSE streaming is handled directly in the component via fetch

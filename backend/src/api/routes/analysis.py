@@ -8,7 +8,7 @@ GET    /spaces/{id}/overview/{doc_key}   — get a Space Overview markdown docum
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ...service.codekb_service import (
     CodeKBService,
@@ -171,9 +171,25 @@ async def get_overview_document(
         )
 
 
+class GenerateOverviewRequest(BaseModel):
+    """Optional body for POST /spaces/{id}/generate-overview."""
+
+    overview_language: str | None = Field(
+        default=None,
+        description=(
+            "Optional lowercase language subtag (e.g. 'en', 'ja'). When set, it "
+            "replaces the space's overview language before this run starts and "
+            "is kept for later runs. Omit to keep the current setting."
+        ),
+    )
+
+
 @router.post("/{space_id}/generate-overview", status_code=202)
 async def generate_overview(
-    space_id: str, request: Request, _authz: None = Depends(gate_write)
+    space_id: str,
+    request: Request,
+    body: GenerateOverviewRequest | None = None,
+    _authz: None = Depends(gate_write),
 ) -> dict:
     """Trigger Space Overview generation for an existing READY space."""
     require_current_user(request)
@@ -183,7 +199,9 @@ async def generate_overview(
         )
     codekb_service = CodeKBService.instance()
     try:
-        return codekb_service.start_overview_generation(space_id)
+        return codekb_service.start_overview_generation(
+            space_id, overview_language=body.overview_language if body else None
+        )
     except SpaceNotFoundError:
         raise HTTPException(status_code=404, detail=f"Space not found: {space_id}")
     except ServiceError as e:
