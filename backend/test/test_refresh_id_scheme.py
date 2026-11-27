@@ -85,6 +85,77 @@ def test_refresh_keeps_the_space_on_its_scheme(tmp_path, scheme, marker):
     assert resolve_id_scheme(orch._prior_kb.id_scheme) is scheme
 
 
+def test_v2_refresh_reuses_legacy_underscore_ids_and_mints_bracket_for_new(tmp_path):
+    """A V2 space indexed before the `<>`-prefix change holds legacy `stem_<hash>`
+    ids. On refresh, a modified file's unchanged symbols must keep those prior
+    `_` ids (and be hash-preserved, not re-summarized), while a newly-added
+    symbol in the same file gets the new `<hash>` form.
+    """
+    import re
+    from src.analysis.content_hash import backfill_component_hashes
+
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "mod.py").write_text(
+        "def alpha():\n    return 1\n\n\ndef beta():\n    return 2\n"
+    )
+
+    # Build the prior KB as a pre-change V2 space: index under V2 (which now
+    # mints the `<>` form), give each component a content hash and a sentinel
+    # description, then rewrite the prefixes back to the legacy `_` form.
+    prior = _index(tmp_path, IdScheme.V2_PATH, "v2")
+    backfill_component_hashes(tmp_path, prior.components)
+    for c in prior.components:
+        c.id = re.sub(r"<([0-9a-f]{12})>", r"_\1", c.id, count=1)
+        if c.parent_component:
+            c.parent_component = re.sub(r"<([0-9a-f]{12})>", r"_\1", c.parent_component, count=1)
+        c.business_behavior.description = f"DESC::{c.get_simple_name()}"
+    legacy_ids = {c.id for c in prior.components}
+    assert legacy_ids  # sanity: the space had symbols
+    assert all("<" not in cid for cid in legacy_ids)
+
+    # Modify the file: alpha and beta are untouched; gamma is new.
+    (tmp_path / "pkg" / "mod.py").write_text(
+        "def alpha():\n    return 1\n\n\ndef beta():\n    return 2\n\n\ndef gamma():\n    return 3\n"
+    )
+
+    orch = RefreshOrchestrator(
+        space_id="space",
+        prior_status={"git_commit_hash": "old"},
+        kb_manager=MagicMock(),
+        vectors_client=MagicMock(),
+        codekb_service=MagicMock(),
+        git_ops=MagicMock(),
+    )
+    orch.kb_manager.import_knowledge_base.return_value = prior
+    orch._clone_dir = tmp_path
+    orch._new_commit_hash = "new"
+    orch._file_changes = [FileChange("pkg/mod.py", ChangeType.MODIFIED)]
+    orch._step_parse_changed()
+    orch._step_merge()
+
+    parsed = {c.get_simple_name(): c for c in orch._parsed_components}
+
+    # Unchanged symbols reuse their prior legacy `_` ids verbatim.
+    assert parsed["alpha"].id in legacy_ids
+    assert parsed["beta"].id in legacy_ids
+    assert "<" not in parsed["alpha"].id and "<" not in parsed["beta"].id
+
+    # The newly-added symbol gets the new `<hash>` form and is not a prior id.
+    assert re.search(r"<[0-9a-f]{12}>", parsed["gamma"].id)
+    assert parsed["gamma"].id not in legacy_ids
+
+    plan = orch._refresh_plan
+    # Hash preservation: unchanged symbols are not flagged for re-summarization
+    # and carry their prior description forward; only gamma is "changed".
+    assert parsed["alpha"].id not in plan.changed_component_ids
+    assert parsed["beta"].id not in plan.changed_component_ids
+    assert parsed["gamma"].id in plan.changed_component_ids
+    assert parsed["alpha"].business_behavior.description == "DESC::alpha"
+    assert parsed["beta"].business_behavior.description == "DESC::beta"
+    # The reused ids are upserted in place, so nothing is deleted from the index.
+    assert plan.vectors_to_delete == frozenset()
+
+
 def test_a_new_index_of_a_legacy_space_is_all_v2(tmp_path):
     _write(tmp_path, SEED)
     legacy = _index(tmp_path, IdScheme.V1_STEM, "")

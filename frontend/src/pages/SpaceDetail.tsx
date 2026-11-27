@@ -98,6 +98,7 @@ export default function SpaceDetail() {
   const [searchPattern, setSearchPattern] = useState("");
   const [typeFilter, setTypeFilter] = useState(TYPE_OPTIONS[0]);
   const [components, setComponents] = useState<Record<string, any>[]>([]);
+  const [searchedPattern, setSearchedPattern] = useState<string | null>(null);
   const [compLoading, setCompLoading] = useState(false);
 
   // Explorer: semantic search
@@ -106,6 +107,7 @@ export default function SpaceDetail() {
   const [semanticTopK, setSemanticTopK] = useState<string>(String(defaultTopK));
   const semanticTopKTouched = useRef(false);
   const [semanticResults, setSemanticResults] = useState<Record<string, any>[]>([]);
+  const [searchedSemanticQuery, setSearchedSemanticQuery] = useState<string | null>(null);
   const [semanticLoading, setSemanticLoading] = useState(false);
 
   // Seed the Top K input from config once it arrives, unless the user has
@@ -321,11 +323,13 @@ export default function SpaceDetail() {
   const handleComponentSearch = async () => {
     if (!spaceId) return;
     setCompLoading(true);
+    setSyntacticDetail(null); setSyntacticFlow(null); setSyntacticDeps(null);
     try {
       const params: { pattern?: string; type?: string } = {};
       if (searchPattern.trim()) params.pattern = searchPattern.trim();
       if (typeFilter.value) params.type = typeFilter.value;
       setComponents(await api.listComponents(spaceId, params));
+      setSearchedPattern(searchPattern.trim());
     } catch (e: any) { showError(t("spaceDetail.errComponentSearch", { message: e.message })); }
     finally { setCompLoading(false); }
   };
@@ -333,7 +337,11 @@ export default function SpaceDetail() {
   const handleSemanticSearch = async () => {
     if (!spaceId || !semanticQuery.trim()) return;
     setSemanticLoading(true);
-    try { setSemanticResults(await api.semanticSearch(spaceId, semanticQuery.trim(), parseInt(semanticTopK) || defaultTopK)); }
+    setSemanticDetail(null); setSemanticFlow(null); setSemanticDeps(null);
+    try {
+      setSemanticResults(await api.semanticSearch(spaceId, semanticQuery.trim(), parseInt(semanticTopK) || defaultTopK));
+      setSearchedSemanticQuery(semanticQuery.trim());
+    }
     catch (e: any) { showError(t("spaceDetail.errSemanticSearch", { message: e.message })); }
     finally { setSemanticLoading(false); }
   };
@@ -1377,7 +1385,10 @@ export default function SpaceDetail() {
           content: (
             <SpaceBetween size="l">
               <Table loading={compLoading} loadingText={t("spaceDetail.searching")} items={components} trackBy="id"
-                empty={<Box textAlign="center" padding="l" color="inherit">{t("spaceDetail.emptyComponents")}</Box>}
+                empty={<Box textAlign="center" padding="l" color="inherit">
+                  {searchedPattern === null ? t("spaceDetail.emptyComponents")
+                    : searchedPattern ? t("spaceDetail.emptyComponentsNoMatch", { pattern: searchedPattern }) : t("spaceDetail.emptyComponentsNone")}
+                </Box>}
                 header={<Header counter={`(${components.length})`}>{t("spaceDetail.syntacticResults")}</Header>}
                 filter={
                   <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -1393,7 +1404,7 @@ export default function SpaceDetail() {
                   </div>
                 }
                 columnDefinitions={[
-                  { id: "name", header: t("spaceDetail.colName"), cell: (item) => <Button variant="inline-link" onClick={() => handleSelectSyntactic(item.name)}>{item.name}</Button>, sortingField: "name" },
+                  { id: "name", header: t("spaceDetail.colName"), cell: (item) => <Button variant="inline-link" onClick={() => handleSelectSyntactic(item.name)}>{item.display_name ?? item.name}</Button>, sortingField: "name" },
                   { id: "type", header: t("spaceDetail.colType"), cell: (item) => item.type },
                   { id: "language", header: t("spaceDetail.colLanguage"), cell: (item) => item.language },
                   ...(showBusinessRelevance ? [{ id: "relevance", header: t("spaceDetail.businessRelevance"), cell: (item: Record<string, any>) => <BusinessRelevanceSummary behavior={item.business_behavior} /> }] : []),
@@ -1417,7 +1428,10 @@ export default function SpaceDetail() {
           content: (
             <SpaceBetween size="l">
             <Table loading={semanticLoading} loadingText={t("spaceDetail.searchingVectors")} items={semanticResults} trackBy="key" wrapLines
-              empty={<Box textAlign="center" padding="l" color="inherit">{t("spaceDetail.emptyVectors")}</Box>}
+              empty={<Box textAlign="center" padding="l" color="inherit">
+                {searchedSemanticQuery === null ? t("spaceDetail.emptyVectors")
+                  : t("spaceDetail.emptyVectorsNoResults", { query: searchedSemanticQuery })}
+              </Box>}
               header={<Header counter={`(${semanticResults.length})`}>{t("spaceDetail.semanticResults")}</Header>}
               filter={
                 <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -1435,9 +1449,9 @@ export default function SpaceDetail() {
                 </div>
               }
               columnDefinitions={[
-                { id: "key", header: t("spaceDetail.colComponentId"), cell: (item) => {
+                { id: "key", header: t("spaceDetail.colComponent"), cell: (item) => {
                   const name = item.key ?? "";
-                  return <Button variant="inline-link" onClick={() => handleSelectSemantic(name)}>{name}</Button>;
+                  return <Button variant="inline-link" onClick={() => handleSelectSemantic(name)}>{item.display_name ?? name}</Button>;
                 }},
                 { id: "type", header: t("spaceDetail.colType"), cell: (item) => item.metadata?.type ?? "—" },
                 { id: "space", header: t("spaceDetail.colSpace"), cell: (item) => item.metadata?.space_id ?? "—" },
@@ -2077,6 +2091,11 @@ function ComponentDetail({ component, flowData, depsData, loading, flowLoading, 
     : t("spaceDetail.nonCallableGeneric");
   const directDependencies = uniqueStrings(depsData?.direct_dependencies);
   const dependents = uniqueStrings(depsData?.dependents);
+  // UI-only labels keyed by component id. The backend attaches display_name
+  // (single component) or a display_names id→label map (flow / deps). Ids stay
+  // the lookup key everywhere; only the rendered label changes.
+  const flowDisplayNames: Record<string, string> = flowData?.display_names ?? {};
+  const depsDisplayNames: Record<string, string> = depsData?.display_names ?? {};
 
   return (
     <Container header={<Header variant="h2" actions={
@@ -2097,7 +2116,7 @@ function ComponentDetail({ component, flowData, depsData, loading, flowLoading, 
         >
           {t("spaceDetail.showDependencies")}
         </Button>
-      </SpaceBetween>}>{component.name}</Header>}>
+      </SpaceBetween>}>{component.display_name ?? component.name}</Header>}>
       <SpaceBetween size="l">
         <ColumnLayout columns={3}>
           <div><Box variant="awsui-key-label">{t("spaceDetail.colType")}</Box><div>{component.type}</div></div>
@@ -2114,7 +2133,7 @@ function ComponentDetail({ component, flowData, depsData, loading, flowLoading, 
           <ExpandableSection headerText={t("spaceDetail.executionFlow", { count: flowData.flow_steps?.length ?? 0 })} defaultExpanded>
             <div style={{ maxHeight: "400px", overflow: "auto", background: "#0f1b2a", borderRadius: "8px", padding: "16px" }}>
               <pre style={{ margin: 0, color: "#d1d5db", fontSize: "13px", fontFamily: "'Amazon Ember Mono', monospace" }}>
-                {flowData.flow_steps?.map((s: any, i: number) => `${"  ".repeat(s.depth ?? 0)}${i + 1}. ${s.caller} → ${s.component}`).join("\n") || t("spaceDetail.noFlowSteps")}
+                {flowData.flow_steps?.map((s: any, i: number) => `${"  ".repeat(s.depth ?? 0)}${i + 1}. ${flowDisplayNames[s.caller] ?? s.caller} → ${flowDisplayNames[s.component] ?? s.component}`).join("\n") || t("spaceDetail.noFlowSteps")}
               </pre>
             </div>
           </ExpandableSection>
@@ -2125,14 +2144,14 @@ function ComponentDetail({ component, flowData, depsData, loading, flowLoading, 
               <div>
                 <Box variant="awsui-key-label">{t("spaceDetail.directDependencies", { count: directDependencies.length })}</Box>
                 <SpaceBetween size="xxs">
-                  {directDependencies.map((d: string) => <Box key={d} variant="code" fontSize="body-s">{d}</Box>)}
+                  {directDependencies.map((d: string) => <Box key={d} variant="code" fontSize="body-s">{depsDisplayNames[d] ?? d}</Box>)}
                   {directDependencies.length === 0 && <Box color="text-body-secondary">{t("spaceDetail.none")}</Box>}
                 </SpaceBetween>
               </div>
               <div>
                 <Box variant="awsui-key-label">{t("spaceDetail.dependents", { count: dependents.length })}</Box>
                 <SpaceBetween size="xxs">
-                  {dependents.map((d: string) => <Box key={d} variant="code" fontSize="body-s">{d}</Box>)}
+                  {dependents.map((d: string) => <Box key={d} variant="code" fontSize="body-s">{depsDisplayNames[d] ?? d}</Box>)}
                   {dependents.length === 0 && <Box color="text-body-secondary">{t("spaceDetail.none")}</Box>}
                 </SpaceBetween>
               </div>

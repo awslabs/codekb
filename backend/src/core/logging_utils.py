@@ -21,9 +21,9 @@ DEFAULT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 # Override via logging.payload_max_chars in config or CODEKB_LOG_PAYLOAD_MAX env.
 DEFAULT_PAYLOAD_MAX_CHARS = 4_000
 
-# Third-party loggers that are chatty by default. They sit at WARNING unless the
-# log level is DEBUG, which opts into the full boto request/response wire trace,
-# strands agent events, and per-request HTTP lines.
+# Third-party loggers that are chatty by default. They sit at
+# logging.third_party_level (WARNING unless set). DEBUG opts into the full boto
+# request/response wire trace, strands agent events, and per-request HTTP lines.
 _NOISY_LOGGERS = (
     "urllib3",
     "botocore",
@@ -105,11 +105,12 @@ def setup_logging(config: Optional[Dict[str, Any]] = None) -> None:
     console_handler.addFilter(secret_filter)
     root_logger.addHandler(console_handler)
 
-    # DEBUG opts into the third-party wire trace; every other level keeps these
-    # loggers at WARNING, since they narrate each HTTP call and AWS request. Set
-    # before the exporter is built: constructing it calls CloudWatch, and botocore
-    # narrates every step of that call.
-    third_party_level = log_level if log_level <= logging.DEBUG else logging.WARNING
+    # Set separately from log_level, since these loggers narrate each HTTP call
+    # and AWS request. Set before the exporter is built: constructing it calls
+    # CloudWatch, and botocore narrates every step of that call.
+    third_party_level = getattr(
+        logging, str(config.get("third_party_level", "WARNING")).upper(), logging.WARNING
+    )
     for noisy in _NOISY_LOGGERS:
         logging.getLogger(noisy).setLevel(third_party_level)
 

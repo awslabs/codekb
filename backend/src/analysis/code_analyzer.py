@@ -18,6 +18,7 @@ from ..core.models import (
     ComponentType,
     IdScheme,
     DEFAULT_SCHEME,
+    DISAMBIG_SEP,
     qualify,
 )
 from ..core.file_utils import FileScanner
@@ -423,10 +424,10 @@ class CodeAnalyzer:
 
         Two overloads (`Save(User)` / `Save(User,bool)`) build the same id, and
         the catalog keeps only the last — the rest lose their source, calls,
-        description and vector. Here we append a short hash of the normalized
-        signature to each colliding id and record the clean bare name in
-        ``_name`` (so ``get_simple_name`` and call resolution still key on the
-        real name). Non-colliding ids are untouched.
+        description and vector. Here we append ``DISAMBIG_SEP`` and a short hash
+        of the normalized signature to each colliding id (``Save#a1b2``).
+        ``get_simple_name`` strips it, so call resolution still keys on the real
+        name. Non-colliding ids are untouched.
         """
         import hashlib
         from collections import defaultdict
@@ -459,9 +460,7 @@ class CodeAnalyzer:
                     unique = f"{disc}{n}"
                 used.add(unique)
 
-                if not comp._name:
-                    comp._name = comp.get_simple_name()
-                comp.id = f"{comp.id}_{unique}"
+                comp.id = f"{comp.id}{DISAMBIG_SEP}{unique}"
 
     def _analyze_file(self, file_path: Path) -> ParseResult:
         """

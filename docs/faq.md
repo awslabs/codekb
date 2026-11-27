@@ -95,7 +95,8 @@ version fails to load, refresh it (Git spaces) or upload it again (zip spaces).
 ### How do I turn on debug logging?
 
 Set `CODEKB_LOG_LEVEL=DEBUG`. It adds payload dumps truncated to
-`CODEKB_LOG_PAYLOAD_MAX` characters (4,000 by default) and verbose SDK diagnostics.
+`CODEKB_LOG_PAYLOAD_MAX` characters (4,000 by default). For AWS SDK and HTTP
+request traces as well, also set `CODEKB_THIRD_PARTY_LOG_LEVEL=DEBUG`.
 Setting the limit to `0` can record complete prompts, responses and analyzed source.
 Use DEBUG briefly, restrict access to the logs, and restore the previous level.
 See [Configuration → Logs](configuration.md#logs) for where logs go.

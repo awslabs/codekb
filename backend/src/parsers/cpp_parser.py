@@ -33,6 +33,7 @@ from ..core.models import (
     Parameter,
     Visibility,
     IdScheme,
+    DISAMBIG_SEP,
 )
 
 
@@ -590,8 +591,8 @@ class CppParser(BaseLanguageParser):
         # uses: it is IDENTICAL for a prototype and its definition (parameter
         # names may differ or be omitted — only types are compared) yet DIFFERS
         # across overloads. So decl+def of one overload still share an id and
-        # merge, while overloads get distinct ids. The bare name is kept in
-        # `_name` so display and call resolution stay on the real name.
+        # merge, while overloads get distinct ids. The hash follows DISAMBIG_SEP,
+        # so `Component.get_simple_name` recovers the bare name from the id.
         #
         # Gated to V2: legacy V1 spaces keep their original ids so delta-refresh
         # regenerates ids that still match the persisted ones (the per-space
@@ -599,8 +600,7 @@ class CppParser(BaseLanguageParser):
         if self._scheme == IdScheme.V2_PATH:
             sig = self._param_type_signature(func_decl)
             disambiguated_id = self._disambiguated_cpp_id(component_id, sig)
-            simple_name = component_id.split(".")[-1]
-            component = self._create_component(
+            return self._create_component(
                 disambiguated_id,
                 comp_type,
                 node,
@@ -609,8 +609,6 @@ class CppParser(BaseLanguageParser):
                 attributes,
                 parent,
             )
-            component._name = simple_name
-            return component
 
         return self._create_component(
             component_id, comp_type, node, self._file_path, self._lang, attributes, parent
@@ -630,7 +628,7 @@ class CppParser(BaseLanguageParser):
         full = hashlib.sha1(sig.encode("utf-8")).hexdigest()
         width = 4
         while True:
-            candidate = f"{component_id}_{full[:width]}"
+            candidate = f"{component_id}{DISAMBIG_SEP}{full[:width]}"
             seen = self._cpp_disc_sigs.get(candidate)
             if seen is None or seen == sig:
                 self._cpp_disc_sigs[candidate] = sig

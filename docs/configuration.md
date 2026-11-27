@@ -58,7 +58,8 @@ For sign-in settings, see [Deploying to AWS → Sign-in](deployment.md#sign-in).
 | `CODEKB_SUMMARIZATION_FAIL_AFTER_STALE_S` | `43200` | Seconds without progress before the next detailed status check marks an interrupted job failed |
 | `CODEKB_BEDROCK_READ_TIMEOUT` | `3600` in `.env.example`, `1800` if unset | Seconds to wait for one Bedrock response |
 | `CODEKB_ROOT_PATH` | unset | CodeKB is served under a path prefix. See [Deploying to AWS → Network](deployment.md#network) |
-| `CODEKB_LOG_LEVEL` | `WARNING` in `.env.example`, `INFO` if unset | `DEBUG` adds truncated payload dumps and verbose SDK diagnostics; see [Logs](#logs) |
+| `CODEKB_LOG_LEVEL` | `WARNING` in `.env.example`, `INFO` if unset | `DEBUG` adds truncated payload dumps; see [Logs](#logs) |
+| `CODEKB_THIRD_PARTY_LOG_LEVEL` | `WARNING` | Level for the AWS SDK, HTTP client and Strands loggers. `DEBUG` logs every AWS request and response |
 
 ## Models
 

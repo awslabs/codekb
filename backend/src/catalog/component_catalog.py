@@ -267,12 +267,8 @@ class ComponentCatalog(IComponentRepository):
     def _update_indexes(self, component: Component) -> None:
         """Update search indexes for a component."""
         # Name index. Callers (e.g. the MCP layer) resolve by the fully-qualified
-        # id, so always index the id — and additionally index the display name
-        # when it differs, so a divergent human-readable name never breaks
-        # id-based lookup.
+        # id, and a component's name is always its id.
         self._name_index.setdefault(component.id, set()).add(component.id)
-        if component.name != component.id:
-            self._name_index.setdefault(component.name, set()).add(component.id)
 
         # Type index
         if component.type not in self._type_index:

@@ -13,11 +13,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from ...service.codekb_service import CodeKBService, SpaceNotFoundError
 from ..auth import require_current_user
+from ..display import (
+    attach_search_display_names,
+    display_names_for_ids,
+    with_display_name,
+)
 from ..gates import gate_read
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ``display_name`` is a UI-only label attached in this REST layer and never at
+# or below the shared service (service, MCP tools, agent and the persisted
+# knowledge base stay clean). The helpers live in ``..display``; see that module
+# for the rationale. ``id`` remains the only lookup key.
 
 
 @router.get("/{space_id}/components")
@@ -37,8 +48,10 @@ async def list_or_search_components(
     codekb_service = CodeKBService.instance()
     try:
         if pattern:
-            return codekb_service.search_components(space_id, pattern, component_type=type)
-        return codekb_service.list_components(space_id, component_type=type)
+            results = codekb_service.search_components(space_id, pattern, component_type=type)
+        else:
+            results = codekb_service.list_components(space_id, component_type=type)
+        return [with_display_name(component) for component in results]
     except SpaceNotFoundError:
         raise HTTPException(status_code=404, detail=f"Space not found: {space_id}")
 
@@ -62,7 +75,7 @@ async def find_component(
     if vector_desc:
         result["business_behavior"]["description"] = vector_desc
 
-    return result
+    return with_display_name(result)
 
 
 @router.get("/{space_id}/components/{name}/flow")
@@ -82,6 +95,13 @@ async def trace_flow(
         raise HTTPException(status_code=404, detail=f"Space not found: {space_id}")
     if result is None:
         raise HTTPException(status_code=404, detail=f"Component not found or no flow: {name}")
+
+    meta_by_id = {c["id"]: c for c in codekb_service.list_components(space_id)}
+    referenced = [result.get("start_component")]
+    for step in result.get("flow_steps", []):
+        referenced.append(step.get("component"))
+        referenced.append(step.get("caller"))
+    result["display_names"] = display_names_for_ids(referenced, meta_by_id)
     return result
 
 
@@ -98,6 +118,17 @@ async def show_dependencies(
         raise HTTPException(status_code=404, detail=f"Space not found: {space_id}")
     if result is None:
         raise HTTPException(status_code=404, detail=f"Component not found: {name}")
+
+    meta_by_id = {c["id"]: c for c in codekb_service.list_components(space_id)}
+    referenced = [result.get("component")]
+    for key in (
+        "direct_dependencies",
+        "transitive_dependencies",
+        "circular_dependencies",
+        "dependents",
+    ):
+        referenced.extend(result.get(key, []))
+    result["display_names"] = display_names_for_ids(referenced, meta_by_id)
     return result
 
 
@@ -121,7 +152,8 @@ async def semantic_search(
     try:
         results = codekb_service.semantic_search(q, n_results=limit, space_id=space_id)
         logger.info(f"GET /spaces/{space_id}/search returned {len(results)} result(s) for q={q!r}")
-        return results
+        meta_by_id = {c["id"]: c for c in codekb_service.list_components(space_id)}
+        return attach_search_display_names(results, meta_by_id)
     except SpaceNotFoundError:
         logger.info(f"Space not found during search: {space_id}")
         raise HTTPException(status_code=404, detail=f"Space not found: {space_id}")
