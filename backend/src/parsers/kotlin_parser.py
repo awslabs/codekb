@@ -158,6 +158,7 @@ class KotlinParser(BaseLanguageParser):
                 else None
             )
             id_name = f"{receiver}.{function_name}" if receiver else function_name
+            id_name = self._with_companion(node, source_lines, id_name)
 
             component_id = self.make_id(file_path, id_name, parent_component)
 
@@ -192,13 +193,14 @@ class KotlinParser(BaseLanguageParser):
             return None
 
     def _extension_receiver(self, node: Any, source_lines: List[str]) -> Optional[str]:
-        """Return the receiver type of an extension function, or None.
+        """Return the receiver type of an extension function or property, or None.
 
         In tree-sitter-kotlin an extension declaration lays the receiver type
         out before the name, separated by a `.`:
         `[fun, user_type(String), ., identifier(toSlug), ...]`. The node
         immediately before that top-level `.` is the receiver. A plain function
-        has no such `.` and returns None.
+        or property has no such `.` and returns None. A `.` inside a value
+        (`val x = a.b`) sits deeper in the tree, so it is never mistaken for one.
         """
         prev = None
         for child in node.children:
@@ -209,6 +211,36 @@ class KotlinParser(BaseLanguageParser):
                 return None
             prev = child
         return None
+
+    def _with_companion(self, node: Any, source_lines: List[str], id_name: str) -> str:
+        """Put the companion's name in front of a companion member's id.
+
+            fun create() in the class             -> Order.create
+            fun create() in `companion object`    -> Order.Companion.create
+
+        Without this, both get the same id and one replaces the other.
+        The parent stays `Order`, so a call like `Order.empty()` still finds the method.
+        V2 only: old V1 spaces keep their ids when refreshed.
+        """
+        if self._scheme != IdScheme.V2_PATH:
+            return id_name
+        body = node.parent  # the `{ ... }` the declaration sits in
+        if body is None or body.type != "class_body":
+            return id_name
+        companion = body.parent  # who owns that `{ ... }`: a class, an object or a companion
+        if companion is None or companion.type != "companion_object":
+            return id_name
+        # `companion object Factory` -> "Factory"; plain `companion object` -> "Companion",
+        # the name Kotlin itself gives it.
+        name = next(
+            (
+                self._get_node_text(child, source_lines)
+                for child in companion.children
+                if child.type == "identifier"
+            ),
+            "Companion",
+        )
+        return f"{name}.{id_name}"
 
     def _extract_class_component(
         self, node: Any, source_lines: List[str], file_path: Path, parent_component: Optional[str]
@@ -224,7 +256,8 @@ class KotlinParser(BaseLanguageParser):
             if not name:
                 return None
 
-            component_id = self.make_id(file_path, name, parent_component)
+            id_name = self._with_companion(node, source_lines, name)
+            component_id = self.make_id(file_path, id_name, parent_component)
 
             component_type = self._determine_class_type(node)
             visibility = self._extract_visibility(node, source_lines)
@@ -268,7 +301,18 @@ class KotlinParser(BaseLanguageParser):
             if not property_name:
                 return None
 
-            component_id = self.make_id(file_path, property_name, parent_component)
+            # Keep the receiver in the id: `val Order.isEligible` -> `Order.isEligible`.
+            # Without it, the property gets the same id as `fun isEligible` and replaces it.
+            # V2 only: old V1 spaces keep their ids when refreshed.
+            receiver = (
+                self._extension_receiver(node, source_lines)
+                if self._scheme == IdScheme.V2_PATH
+                else None
+            )
+            id_name = f"{receiver}.{property_name}" if receiver else property_name
+            id_name = self._with_companion(node, source_lines, id_name)
+
+            component_id = self.make_id(file_path, id_name, parent_component)
 
             visibility = self._extract_visibility(node, source_lines)
             is_constant = self._has_modifier(node, "const") or self._is_val(node)

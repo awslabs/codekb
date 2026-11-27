@@ -41,6 +41,16 @@ infrastructure together.
   rest. Names are now read from the declaration's `name` field.
 - C# extension-method calls (`value.Slugify()`) were missing from the call
   graph; they now resolve to the extension method's definition.
+- Kotlin extension properties were indexed without their receiver type, so
+  `val Order.isEligible` got the same id as `fun isEligible` in the same file
+  and replaced it, losing the function's source, calls, and description. The id
+  now includes the receiver (`Order.isEligible`), as it already did for
+  extension functions. V2 spaces only.
+- Kotlin companion object members were indexed as class members, so a companion
+  member and a class member with the same name shared an id and one was lost.
+  Companion members now carry the companion's name in the id
+  (`Order.Companion.create`, or `Shop.Factory.open` for a named companion), and
+  calls such as `Order.empty()` still resolve. V2 spaces only.
 - Summarization retry and batch-packing edge cases, including identical
   oversized prompts being re-sent.
 
