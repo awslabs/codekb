@@ -432,6 +432,18 @@ class CSharpParser(BaseLanguageParser):
         # property_declaration / event_declaration / indexer_declaration:
         #   modifiers type identifier ...
         if node.type in ("property_declaration", "event_declaration", "indexer_declaration"):
+            # Use the declaration's `name` field directly. Scanning for the
+            # first identifier child instead picks the TYPE when it is a simple
+            # name — `DateTime CreatedAt` parses as "DateTime" — so every member
+            # of that type collapses onto one id. Mirrors `_extract_method_name`.
+            #
+            # V2 only: this changes the component id, so legacy V1 spaces keep
+            # the first-identifier behavior for refresh stability and adopt the
+            # fix on a deliberate full V2 reindex.
+            if self._scheme == IdScheme.V2_PATH:
+                name_node = node.child_by_field_name("name")
+                if name_node is not None:
+                    return self._get_node_text(name_node, source_lines)
             for child in node.children:
                 if child.type == "identifier":
                     return self._get_node_text(child, source_lines)
