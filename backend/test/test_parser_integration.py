@@ -479,6 +479,14 @@ class TestCSharpIntegration:
         admin_member = next(c for c in result if c["id"] == "Example.Test.UserRole.Admin")
         assert admin_member["type"] == "constant"
 
+        # Delegates are a callable contract: indexed as an interface (catalog
+        # only, no summarization cost), named from the `name` field, with their
+        # parameters extracted.
+        assert "Example.Test.UserFilter" in ids
+        user_filter = next(c for c in result if c["id"] == "Example.Test.UserFilter")
+        assert user_filter["type"] == "interface"
+        assert [p["name"] for p in user_filter["attributes"]["parameters"]] == ["username", "minAge"]
+
         # Constants vs variables
         max_users = next(c for c in result if c["id"] == "Example.Test.UserService.MAX_USERS")
         assert max_users["type"] == "constant"

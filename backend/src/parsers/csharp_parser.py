@@ -200,6 +200,17 @@ class CSharpParser(BaseLanguageParser):
                     components.append(component)
                 return
 
+            # Delegates: a named callable contract (a type), surfaced as
+            # INTERFACE. Catalog-only, like other types: no summarization or
+            # embedding cost for what is just a bodyless signature.
+            if node.type == "delegate_declaration":
+                component = self._extract_delegate_component(
+                    node, source_lines, file_path, parent_component
+                )
+                if component:
+                    components.append(component)
+                return
+
             # Continue walking the rest of the tree
             for child in node.children:
                 extract_from_node(child, parent_component)
@@ -471,6 +482,48 @@ class CSharpParser(BaseLanguageParser):
             return self._create_component(
                 self.make_id(file_path, member_name, parent_component),
                 ComponentType.CONSTANT,
+                node,
+                file_path,
+                "csharp",
+                attributes,
+                parent_component,
+            )
+        except Exception:
+            return None
+
+    def _extract_delegate_component(
+        self,
+        node: Any,
+        source_lines: List[str],
+        file_path: Path,
+        parent_component: Optional[str],
+    ) -> Optional[Component]:
+        """Extract a C# delegate as an INTERFACE component.
+
+        A `delegate_declaration` is a named callable contract, effectively a
+        single-method interface, so it is mapped to INTERFACE. That keeps it
+        in the catalog (discoverable, with its signature) without the
+        summarization/embedding cost that FUNCTION/METHOD incur for what is a
+        bodyless signature. Its name is in the `name` field and its parameters
+        in a `parameter_list`, so it reuses the method parameter/signature
+        helpers; reading the `name` field also avoids the
+        simple-return-type-as-name trap (`int`/`DateTime`).
+        """
+        try:
+            name_node = node.child_by_field_name("name")
+            if name_node is None:
+                return None
+            name = self._get_node_text(name_node, source_lines)
+            attributes = ComponentAttributes(
+                signature=self._extract_signature(node, source_lines),
+                parameters=self.extract_function_parameters(node, source_lines),
+                visibility=self._extract_visibility(node, source_lines),
+                line_count=node.end_point[0] - node.start_point[0] + 1,
+                is_static=self._has_modifier(node, "static"),
+            )
+            return self._create_component(
+                self.make_id(file_path, name, parent_component),
+                ComponentType.INTERFACE,
                 node,
                 file_path,
                 "csharp",
