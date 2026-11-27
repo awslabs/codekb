@@ -13,6 +13,37 @@ infrastructure together.
      below (omit any that are empty). On release, rename this section to the new
      version with a date and start a fresh Unreleased section. -->
 
+### Added
+
+- The C# parser indexes more of the language: enum members (as constants),
+  delegates (as interfaces), and a positional record's parameters (as member
+  variables), so these symbols appear in the catalog alongside the rest.
+- Strict coverage gate for summarization: a run now fails with
+  `incomplete_coverage` when an eligible function or method is left without a
+  generated description, instead of completing with silent gaps. Coverage (N/N)
+  is surfaced on the pipeline status.
+
+### Changed
+
+- Summarization sizes its input batches by an operator-configured token budget
+  (`CODEKB_SUMMARIZATION_INPUT_TOKEN_BUDGET`) instead of a character ceiling, so
+  a batch fits the model's context window. Oversized groups are split and
+  reconciled adaptively, down to one function per call, and stop re-sending once
+  a round makes no progress. Packed call-graph context uses a compact JSON
+  format. Replaces `summarization.max_input_chars`.
+- Raised the Bedrock output cap (`CODEKB_BEDROCK_MAX_TOKENS`) to 128000.
+
+### Fixed
+
+- C# member and parameter names were taken from the type when the type was a
+  simple name (`DateTime CreatedAt` indexed as `DateTime`), which collapsed
+  distinct members onto one id and lost source, calls, and descriptions for the
+  rest. Names are now read from the declaration's `name` field.
+- C# extension-method calls (`value.Slugify()`) were missing from the call
+  graph; they now resolve to the extension method's definition.
+- Summarization retry and batch-packing edge cases, including identical
+  oversized prompts being re-sent.
+
 ## [1.1.0] - 2026-11-27
 
 ### Added
