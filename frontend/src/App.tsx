@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import TopNavigation from "@cloudscape-design/components/top-navigation";
 import AppLayout from "@cloudscape-design/components/app-layout";
@@ -16,6 +17,7 @@ import Hyperspaces from "./pages/Hyperspaces";
 import HyperspaceDetail from "./pages/HyperspaceDetail";
 import CreateHyperspace from "./pages/CreateHyperspace";
 import Documentation from "./pages/Documentation";
+import { buildLanguageSwitcherUtility } from "./components/LanguageSwitcher";
 import {
   isAuthEnabled,
   isAuthenticated,
@@ -27,6 +29,7 @@ import {
 
 /** Handles the /auth/callback route — exchanges code for tokens then redirects to /. */
 function AuthCallback() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
   const handled = useRef(false);
@@ -50,32 +53,32 @@ function AuthCallback() {
           sessionStorage.removeItem("auth_error");
           navigate("/", { replace: true });
         } else {
-          setError("Failed to exchange authorization code for tokens.");
+          setError(t("auth.exchangeFailed"));
           sessionStorage.setItem("auth_error", "true");
         }
       })
       .catch((e) => {
         console.error("Auth callback exchange threw:", e);
-        setError(`Sign-in error: ${e instanceof Error ? e.message : String(e)}`);
+        setError(`${t("auth.signInFailed")}: ${e instanceof Error ? e.message : String(e)}`);
         sessionStorage.setItem("auth_error", "true");
       });
-  }, [navigate]);
+  }, [navigate, t]);
 
   if (error) {
     return (
       <div style={{ padding: 40 }}>
-        <h2>Sign-in failed</h2>
+        <h2>{t("auth.signInFailed")}</h2>
         <p style={{ color: "#d13212" }}>{error}</p>
         <p style={{ marginTop: 16 }}>
           <button onClick={() => { sessionStorage.removeItem("auth_error"); login(); }}>
-            Try again
+            {t("auth.tryAgain")}
           </button>
         </p>
       </div>
     );
   }
 
-  return <div style={{ padding: 40 }}>Signing in…</div>;
+  return <div style={{ padding: 40 }}>{t("auth.signingIn")}</div>;
 }
 
 /**
@@ -84,6 +87,7 @@ function AuthCallback() {
  * If there was an auth error, shows the error instead of looping.
  */
 function AuthGate({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation();
   const loginAttempted = useRef(false);
 
   // Auth not configured — render app normally
@@ -100,11 +104,11 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   if (authError) {
     return (
       <div style={{ padding: 40 }}>
-        <h2>Authentication required</h2>
-        <p>A previous sign-in attempt failed. Check the browser console for details.</p>
+        <h2>{t("auth.authRequired")}</h2>
+        <p>{t("auth.previousAttemptFailed")}</p>
         <p style={{ marginTop: 16 }}>
           <button onClick={() => { sessionStorage.removeItem("auth_error"); login(); }}>
-            Sign in
+            {t("auth.signIn")}
           </button>
         </p>
       </div>
@@ -117,10 +121,11 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     login();
   }
 
-  return <div style={{ padding: 40 }}>Redirecting to sign in…</div>;
+  return <div style={{ padding: 40 }}>{t("auth.redirecting")}</div>;
 }
 
 function Shell() {
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const [user, setUser] = useState(getUser());
@@ -132,12 +137,12 @@ function Shell() {
   const userUtility = isAuthEnabled() && user
     ? {
         type: "button" as const,
-        text: user.email || "User",
+        text: user.email || t("nav.user"),
         iconName: "user-profile" as const,
       }
     : { type: "button" as const, text: "", iconName: "user-profile" as const };
 
-  const utilities = [userUtility];
+  const utilities = [buildLanguageSwitcherUtility(t, i18n), userUtility];
 
   // Tiny branded logo as inline SVG data URI (sparkle icon matching gen-ai)
   const logoSvg = `data:image/svg+xml,${encodeURIComponent(
@@ -153,35 +158,35 @@ function Shell() {
       <TopNavigation
         identity={{
           href: "/",
-          title: "CodeKB",
-          logo: { src: logoSvg, alt: "CodeKB" },
+          title: t("nav.appTitle"),
+          logo: { src: logoSvg, alt: t("nav.logoAlt") },
         }}
-        i18nStrings={{ overflowMenuTriggerText: "More", overflowMenuTitleText: "All" }}
+        i18nStrings={{ overflowMenuTriggerText: t("nav.overflowMenuTrigger"), overflowMenuTitleText: t("nav.overflowMenuTitle") }}
         utilities={utilities}
       />
       <AppLayout
         toolsHide
         navigation={
           <SideNavigation
-            header={{ text: "CodeKB Spaces", href: "/" }}
+            header={{ text: t("nav.header"), href: "/" }}
             activeHref={location.pathname}
             onFollow={(e) => {
               e.preventDefault();
               navigate(e.detail.href);
             }}
             items={[
-              { type: "link", text: "Overview", href: "/" },
-              { type: "link", text: "Spaces", href: "/spaces" },
-              { type: "link", text: "Hyperspaces", href: "/hyperspaces" },
+              { type: "link", text: t("nav.overview"), href: "/" },
+              { type: "link", text: t("nav.spaces"), href: "/spaces" },
+              { type: "link", text: t("nav.hyperspaces"), href: "/hyperspaces" },
               { type: "divider" },
-              { type: "link", text: "Global search", href: "/search" },
+              { type: "link", text: t("nav.globalSearch"), href: "/search" },
               { type: "divider" },
-              { type: "link", text: "Agent Hopper", href: "/agent", info: <Icon name="gen-ai" /> },
+              { type: "link", text: t("nav.agentHopper"), href: "/agent", info: <Icon name="gen-ai" /> },
               { type: "divider" },
-              { type: "link", text: "Git credentials", href: "/git-creds" },
-              { type: "link", text: "Settings", href: "/settings" },
+              { type: "link", text: t("components.navGitCredentials"), href: "/git-creds" },
+              { type: "link", text: t("nav.settings"), href: "/settings" },
               { type: "divider" },
-              { type: "link", text: "User Guide", href: "/docs", info: <Icon name="status-info" /> },
+              { type: "link", text: t("nav.userGuide"), href: "/docs", info: <Icon name="status-info" /> },
             ]}
           />
         }

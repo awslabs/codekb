@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Table from "@cloudscape-design/components/table";
 import Header from "@cloudscape-design/components/header";
@@ -74,18 +75,19 @@ function LanguageBadges({ languages }: { languages?: string[] }) {
 
 // ── Pulsing status for in-progress ─────────────────────────────────────
 function AnimatedStatus({ status }: { status?: string }) {
-  if (status === "READY") return <StatusIndicator type="success">Ready</StatusIndicator>;
-  if (status === "FAILED") return <StatusIndicator type="error">Failed</StatusIndicator>;
-  if (status === "REFRESH_FAILED") return <StatusIndicator type="error">Refresh failed</StatusIndicator>;
+  const { t } = useTranslation();
+  if (status === "READY") return <StatusIndicator type="success">{t("common.statusReady")}</StatusIndicator>;
+  if (status === "FAILED") return <StatusIndicator type="error">{t("common.statusFailed")}</StatusIndicator>;
+  if (status === "REFRESH_FAILED") return <StatusIndicator type="error">{t("spaceList.statusRefreshFailed")}</StatusIndicator>;
   if (status === "ANALYZING" || status === "SUBMITTED" || status === "SUMMARIZING" || status === "REFRESHING") {
-    const label = status === "SUMMARIZING" ? "Summarizing" : status === "REFRESHING" ? "Refreshing" : "Analyzing";
+    const label = status === "SUMMARIZING" ? t("common.statusSummarizing") : status === "REFRESHING" ? t("common.statusRefreshing") : t("common.statusAnalyzing");
     return (
       <span className="pulse-status">
         <StatusIndicator type="in-progress">{label}</StatusIndicator>
       </span>
     );
   }
-  return <StatusIndicator type="loading">Loading</StatusIndicator>;
+  return <StatusIndicator type="loading">{t("common.statusLoading")}</StatusIndicator>;
 }
 
 // ── Date formatting ─────────────────────────────────────────────────────
@@ -104,6 +106,7 @@ function formatDate(iso?: string) {
 
 // ── Main component ─────────────────────────────────────────────────────
 export default function SpaceList() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: spaces = [], isLoading: loading, isFetching, refetch, error: listError, dataUpdatedAt } = useQuery({
@@ -164,7 +167,7 @@ export default function SpaceList() {
     setSelectedItems([]);
     queryClient.invalidateQueries({ queryKey: ["spaces"] });
     if (failures.length === 0) {
-      setFlash([{ type: "success", content: `Deleted ${succeeded} space(s).`, dismissible: true, onDismiss: () => setFlash([]) }]);
+      setFlash([{ type: "success", content: t("spaceList.flashDeleted", { count: succeeded }), dismissible: true, onDismiss: () => setFlash([]) }]);
     } else {
       const authz = failures
         .map((f) => f.reason)
@@ -172,7 +175,7 @@ export default function SpaceList() {
       const detail = authz ? authz.displayMessage : failures[0].reason?.message ?? "";
       setFlash([{
         type: succeeded > 0 ? "warning" : "error",
-        content: `Deleted ${succeeded} of ${items.length}; ${failures.length} failed. ${detail}`,
+        content: t("spaceList.flashDeletePartial", { succeeded, total: items.length, failed: failures.length, detail }),
         dismissible: true,
         onDismiss: () => setFlash([]),
       }]);
@@ -190,11 +193,11 @@ export default function SpaceList() {
     const creators = Array.from(new Set(spaces.map((s) => s.created_by).filter(Boolean) as string[])).sort();
 
     const properties: PropertyFilterProps.FilteringProperty[] = [
-      { key: "status", operators: ["=", "!="], propertyLabel: "Status", groupValuesLabel: "Status values" },
-      { key: "language", operators: ["=", "!=", ":", "!:"], propertyLabel: "Language", groupValuesLabel: "Language values" },
-      { key: "source_type", operators: ["=", "!="], propertyLabel: "Source type", groupValuesLabel: "Source type values" },
-      { key: "created_by", operators: ["=", "!=", ":", "!:"], propertyLabel: "Created by", groupValuesLabel: "Creator values" },
-      { key: "space_name", operators: [":", "!:"], propertyLabel: "Name", groupValuesLabel: "Name values" },
+      { key: "status", operators: ["=", "!="], propertyLabel: t("spaceList.propStatus"), groupValuesLabel: t("spaceList.propStatusValues") },
+      { key: "language", operators: ["=", "!=", ":", "!:"], propertyLabel: t("spaceList.propLanguage"), groupValuesLabel: t("spaceList.propLanguageValues") },
+      { key: "source_type", operators: ["=", "!="], propertyLabel: t("spaceList.propSourceType"), groupValuesLabel: t("spaceList.propSourceTypeValues") },
+      { key: "created_by", operators: ["=", "!=", ":", "!:"], propertyLabel: t("spaceList.propCreatedBy"), groupValuesLabel: t("spaceList.propCreatedByValues") },
+      { key: "space_name", operators: [":", "!:"], propertyLabel: t("spaceList.propName"), groupValuesLabel: t("spaceList.propNameValues") },
     ];
 
     const options: PropertyFilterProps.FilteringOption[] = [
@@ -205,7 +208,7 @@ export default function SpaceList() {
     ];
 
     return { filteringProperties: properties, filteringOptions: options };
-  }, [spaces]);
+  }, [spaces, t]);
 
   const matchesToken = (s: SpaceSummary, token: PropertyFilterProps.Token): boolean => {
     const op = token.operator;
@@ -249,8 +252,8 @@ export default function SpaceList() {
     }
     if (query.tokens.length === 0) return true;
     return query.operation === "and"
-      ? query.tokens.every((t) => matchesToken(s, t))
-      : query.tokens.some((t) => matchesToken(s, t));
+      ? query.tokens.every((tok) => matchesToken(s, tok))
+      : query.tokens.some((tok) => matchesToken(s, tok));
   });
 
   const sorted = [...filtered].sort((a, b) => {
@@ -278,20 +281,19 @@ export default function SpaceList() {
 
   return (
     <SpaceBetween size="l">
-      <BreadcrumbGroup items={[{ text: "CodeKB", href: "/" }, { text: "Spaces", href: "/spaces" }]} />
+      <BreadcrumbGroup items={[{ text: t("common.breadcrumbRoot"), href: "/" }, { text: t("nav.spaces"), href: "/spaces" }]} />
       <Flashbar items={flash} />
       {expiredProviders.length > 0 && (
         <Alert
           type="warning"
-          header="Git token expired"
-          action={<Button onClick={() => navigate(GIT_CREDS_PATH)}>Git credentials</Button>}
+          header={t("spaceList.tokenExpiredHeader")}
+          action={<Button onClick={() => navigate(GIT_CREDS_PATH)}>{t("spaceList.gitCredentials")}</Button>}
         >
-          Your {expiredProviders.join(", ")} token has expired, so only public spaces are shown.
-          Reconnect it to see your private spaces.
+          {t("spaceList.tokenExpiredBody", { providers: expiredProviders.join(", ") })}
         </Alert>
       )}
       {listError && (
-        <Alert type="error" header="Could not load spaces">
+        <Alert type="error" header={t("spaceList.loadErrorHeader")}>
           {listError instanceof ApiError ? listError.displayMessage : (listError as Error).message}
         </Alert>
       )}
@@ -301,7 +303,7 @@ export default function SpaceList() {
         selectedItems={selectedItems}
         onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
         loading={loading}
-        loadingText="Loading spaces..."
+        loadingText={t("spaceList.loadingText")}
         items={paginated}
         trackBy="space_id"
         sortingColumn={sortingColumn as any}
@@ -313,11 +315,11 @@ export default function SpaceList() {
         }}
         empty={
           <Box textAlign="center" color="inherit" padding="l">
-            <b>No spaces</b>
+            <b>{t("spaceList.emptyTitle")}</b>
             <Box padding={{ bottom: "s" }} variant="p" color="inherit">
-              No spaces yet. Click "New space" to get started.
+              {t("spaceList.emptyBody")}
             </Box>
-            <Button onClick={() => navigate("/create")}>New space</Button>
+            <Button onClick={() => navigate("/create")}>{t("spaceList.newSpace")}</Button>
           </Box>
         }
         header={
@@ -329,17 +331,17 @@ export default function SpaceList() {
             }
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <Button iconName="refresh" onClick={refresh} />
+                <Button iconName="refresh" ariaLabel={t("common.refresh")} onClick={refresh} />
                 <Button disabled={selectedItems.length === 0 || selectedItems.some((s) => s.status === "REFRESHING")} onClick={() => setDeleteVisible(true)}>
-                  Delete
+                  {t("spaceList.delete")}
                 </Button>
                 <Button variant="primary" onClick={() => navigate("/create")}>
-                  New space
+                  {t("spaceList.newSpace")}
                 </Button>
               </SpaceBetween>
             }
           >
-            Spaces
+            {t("nav.spaces")}
           </Header>
         }
         filter={
@@ -352,66 +354,66 @@ export default function SpaceList() {
               }}
               filteringProperties={filteringProperties}
               filteringOptions={filteringOptions}
-              countText={`${filtered.length} match${filtered.length === 1 ? "" : "es"}`}
+              countText={t("spaceList.matchCount", { count: filtered.length })}
               expandToViewport
               i18nStrings={{
-              filteringAriaLabel: "Filter spaces",
-              filteringPlaceholder: "Filter by status, language, source, creator, or name",
-              dismissAriaLabel: "Dismiss",
-              clearAriaLabel: "Clear",
-              groupValuesText: "Values",
-              groupPropertiesText: "Properties",
-              operatorsText: "Operators",
-              operationAndText: "and",
-              operationOrText: "or",
-              operatorLessText: "Less than",
-              operatorLessOrEqualText: "Less than or equal",
-              operatorGreaterText: "Greater than",
-              operatorGreaterOrEqualText: "Greater than or equal",
-              operatorContainsText: "Contains",
-              operatorDoesNotContainText: "Does not contain",
-              operatorEqualsText: "Equals",
-              operatorDoesNotEqualText: "Does not equal",
-              editTokenHeader: "Edit filter",
-              propertyText: "Property",
-              operatorText: "Operator",
-              valueText: "Value",
-              cancelActionText: "Cancel",
-              applyActionText: "Apply",
-              allPropertiesLabel: "All properties",
-              tokenLimitShowMore: "Show more",
-              tokenLimitShowFewer: "Show fewer",
-              clearFiltersText: "Clear filters",
-              removeTokenButtonAriaLabel: () => "Remove filter",
-              enteredTextLabel: (text) => `Use: "${text}"`,
+              filteringAriaLabel: t("spaceList.filterAriaLabel"),
+              filteringPlaceholder: t("spaceList.filterPlaceholder"),
+              dismissAriaLabel: t("spaceList.filterDismiss"),
+              clearAriaLabel: t("spaceList.filterClear"),
+              groupValuesText: t("spaceList.filterGroupValues"),
+              groupPropertiesText: t("spaceList.filterGroupProperties"),
+              operatorsText: t("spaceList.filterOperators"),
+              operationAndText: t("spaceList.filterAnd"),
+              operationOrText: t("spaceList.filterOr"),
+              operatorLessText: t("spaceList.filterLess"),
+              operatorLessOrEqualText: t("spaceList.filterLessOrEqual"),
+              operatorGreaterText: t("spaceList.filterGreater"),
+              operatorGreaterOrEqualText: t("spaceList.filterGreaterOrEqual"),
+              operatorContainsText: t("spaceList.filterContains"),
+              operatorDoesNotContainText: t("spaceList.filterDoesNotContain"),
+              operatorEqualsText: t("spaceList.filterEquals"),
+              operatorDoesNotEqualText: t("spaceList.filterDoesNotEqual"),
+              editTokenHeader: t("spaceList.filterEditHeader"),
+              propertyText: t("spaceList.filterProperty"),
+              operatorText: t("spaceList.filterOperator"),
+              valueText: t("spaceList.filterValue"),
+              cancelActionText: t("common.cancel"),
+              applyActionText: t("spaceList.filterApply"),
+              allPropertiesLabel: t("spaceList.filterAllProperties"),
+              tokenLimitShowMore: t("spaceList.filterShowMore"),
+              tokenLimitShowFewer: t("spaceList.filterShowFewer"),
+              clearFiltersText: t("spaceList.filterClearFilters"),
+              removeTokenButtonAriaLabel: () => t("spaceList.filterRemove"),
+              enteredTextLabel: (text) => t("spaceList.filterEnteredText", { text }),
             }}
           />
             <Toggle
               checked={showMySpaces}
               onChange={({ detail }) => { setShowMySpaces(detail.checked); setCurrentPage(1); }}
             >
-              My spaces
+              {t("spaceList.mySpaces")}
             </Toggle>
           </SpaceBetween>
         }
-        pagination={<Pagination currentPageIndex={currentPage} pagesCount={pagesCount} onChange={({ detail }) => setCurrentPage(detail.currentPageIndex)} />}
+        pagination={<Pagination currentPageIndex={currentPage} pagesCount={pagesCount} ariaLabels={{ nextPageLabel: t("spaceList.pageNext"), previousPageLabel: t("spaceList.pagePrevious"), pageLabel: (n) => t("spaceList.pageLabel", { page: n }) }} onChange={({ detail }) => setCurrentPage(detail.currentPageIndex)} />}
         preferences={
           <CollectionPreferences
-            title="Table settings"
-            confirmLabel="Confirm"
-            cancelLabel="Cancel"
+            title={t("common.tableSettings")}
+            confirmLabel={t("common.confirm")}
+            cancelLabel={t("common.cancel")}
             preferences={{ pageSize }}
             onConfirm={({ detail }) => {
               setPageSize(detail.pageSize ?? 10);
               setCurrentPage(1);
             }}
             pageSizePreference={{
-              title: "Page size",
+              title: t("common.pageSize"),
               options: [
-                { value: 10, label: "10 rows" },
-                { value: 25, label: "25 rows" },
-                { value: 50, label: "50 rows" },
-                { value: 100, label: "100 rows" },
+                { value: 10, label: t("common.rows", { count: 10 }) },
+                { value: 25, label: t("common.rows", { count: 25 }) },
+                { value: 50, label: t("common.rows", { count: 50 }) },
+                { value: 100, label: t("common.rows", { count: 100 }) },
               ],
             }}
           />
@@ -419,7 +421,7 @@ export default function SpaceList() {
         columnDefinitions={[
           {
             id: "space_id",
-            header: "Space",
+            header: t("spaceList.colSpace"),
             cell: (item) => {
               const displayName = item.space_name || item.space_id.replace(/-[a-f0-9]{4,}$/, "");
               return (
@@ -435,17 +437,17 @@ export default function SpaceList() {
           },
           {
             id: "status",
-            header: "Status",
+            header: t("spaceList.colStatus"),
             cell: (item) => <AnimatedStatus status={item.status} />,
             sortingField: "status",
           },
           {
             id: "visibility",
-            header: "Visibility",
+            header: t("spaceList.colVisibility"),
             cell: (item) =>
               item.visibility ? (
                 <Badge color={item.visibility === "public" ? "blue" : "grey"}>
-                  {item.visibility === "public" ? "Public" : "Private"}
+                  {item.visibility === "public" ? t("spaceList.public") : t("spaceList.private")}
                 </Badge>
               ) : (
                 "—"
@@ -453,12 +455,12 @@ export default function SpaceList() {
           },
           {
             id: "languages",
-            header: "Languages",
+            header: t("spaceList.colLanguages"),
             cell: (item) => <LanguageBadges languages={item.languages} />,
           },
           {
             id: "lines",
-            header: "Lines of code",
+            header: t("spaceList.colLines"),
             cell: (item) => {
               const lines = (item as any).total_lines;
               return lines ? Number(lines).toLocaleString() : "—";
@@ -467,18 +469,18 @@ export default function SpaceList() {
           },
           {
             id: "created_by",
-            header: "Created by",
+            header: t("spaceList.colCreatedBy"),
             cell: (item) => item.created_by || "—",
           },
           {
             id: "created_at",
-            header: "Created at",
+            header: t("spaceList.colCreatedAt"),
             cell: (item) => formatDate(item.created_at),
             sortingField: "created_at",
           },
           {
             id: "git_url",
-            header: "Source",
+            header: t("spaceList.colSource"),
             cell: (item) => {
               const href = safeHttpUrl(item.git_url);
               if (href) {
@@ -499,24 +501,19 @@ export default function SpaceList() {
       <Modal
         visible={deleteVisible}
         onDismiss={() => setDeleteVisible(false)}
-        header="Delete spaces"
+        header={t("spaceList.deleteHeader")}
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button onClick={() => setDeleteVisible(false)}>Cancel</Button>
+              <Button onClick={() => setDeleteVisible(false)}>{t("common.cancel")}</Button>
               <Button variant="primary" loading={deleting} onClick={handleDelete}>
-                Delete
+                {t("spaceList.delete")}
               </Button>
             </SpaceBetween>
           </Box>
         }
       >
-        Delete {selectedItems.length} space(s)?
-
-        This will delete all associated data including component catalog,
-        local copy of source code and vectorized function summaries.
-
-        This action cannot be undone.
+        {t("spaceList.deleteBody", { count: selectedItems.length })}
         <Box variant="p" padding={{ top: "s" }}>
           {selectedItems.map((p) => (
             <Box key={p.space_id} variant="code">{p.space_id} </Box>

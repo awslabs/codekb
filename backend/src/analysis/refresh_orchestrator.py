@@ -1812,6 +1812,7 @@ class RefreshOrchestrator:
             codekb_service=self.codekb_service,
             on_progress=_on_progress,
             omit_low_business_relevance=self._business_behavior_enabled,
+            language_directive=self.codekb_service._resolve_analysis_language(self.space_id),
         )
 
         # Point the service context at the MERGED knowledge base (rebuilt call

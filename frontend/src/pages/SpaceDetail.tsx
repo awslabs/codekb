@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import Container from "@cloudscape-design/components/container";
@@ -8,6 +10,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
+import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
 import Input from "@cloudscape-design/components/input";
 import Select from "@cloudscape-design/components/select";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
@@ -38,14 +41,15 @@ import { useDefaultTopK } from "../hooks/useSearchDefaults";
 import MermaidBlock from "../components/MermaidBlock";
 import CodeBlock, { languageFromPath } from "../components/CodeBlock";
 import CopyButton from "../components/CopyButton";
+import { SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE } from "../i18n/languages";
 import "../styles/markdown.css";
 
 const TYPE_OPTIONS = [
-  { label: "All types", value: "" },
-  { label: "Functions", value: "function" },
-  { label: "Classes", value: "class" },
-  { label: "Methods", value: "method" },
-  { label: "Variables", value: "variable" },
+  { labelKey: "spaceDetail.typeAll", value: "" },
+  { labelKey: "spaceDetail.typeFunctions", value: "function" },
+  { labelKey: "spaceDetail.typeClasses", value: "class" },
+  { labelKey: "spaceDetail.typeMethods", value: "method" },
+  { labelKey: "spaceDetail.typeVariables", value: "variable" },
 ];
 
 // Space Overview docs are generated with a top-level `# <Title>` heading that
@@ -58,6 +62,8 @@ function stripLeadingTitleHeading(markdown: string): string {
 }
 
 export default function SpaceDetail() {
+  const { t } = useTranslation();
+  const typeOptions = TYPE_OPTIONS.map((o) => ({ label: t(o.labelKey), value: o.value }));
   const { spaceId } = useParams<{ spaceId: string }>();
   const navigate = useNavigate();
   const [space, setSpace] = useState<SpaceDetailType | null>(null);
@@ -131,6 +137,21 @@ export default function SpaceDetail() {
   const [overviewLoadFailed, setOverviewLoadFailed] = useState<Record<string, boolean>>({});
   const [activeOverviewDoc, setActiveOverviewDoc] = useState<string | null>(null);
   const [overviewSubmitting, setOverviewSubmitting] = useState(false);
+  // The Overview generate/regenerate buttons open a language menu; picking a
+  // language starts generation in it (the request also saves it on the space).
+  // The space's stored language is shown checked; unset/unsupported means en.
+  const storedOverviewLanguage = space?.overview_language;
+  const currentOverviewLanguage: string = SUPPORTED_LANGUAGES.some(
+    (l) => l.languageCode === storedOverviewLanguage
+  )
+    ? (storedOverviewLanguage as string)
+    : DEFAULT_LANGUAGE;
+  const overviewLanguageItems = SUPPORTED_LANGUAGES.map((l) => ({
+    id: l.languageCode as string,
+    text: l.displayName,
+    itemType: "checkbox" as const,
+    checked: l.languageCode === currentOverviewLanguage,
+  }));
   const [overviewEnabled, setOverviewEnabled] = useState(true);
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTabId, setActiveTabId] = useState(() => searchParams.get("tab") || "codebase");
@@ -164,7 +185,7 @@ export default function SpaceDetail() {
       // confirm popup shouldn't linger (e.g. a write_denied authz refusal).
       setDeleteVisible(false);
       const msg =
-        e instanceof ApiError && e.isAuthz ? e.displayMessage : `Delete failed: ${e.message}`;
+        e instanceof ApiError && e.isAuthz ? e.displayMessage : t("spaceDetail.errDeleteFailed", { message: e.message });
       showError(msg);
     } finally {
       setDeleting(false);
@@ -179,10 +200,10 @@ export default function SpaceDetail() {
       await loadStatus();
     } catch (e: any) {
       const msg = e.message?.includes("is busy")
-        ? "Space is currently being processed. Try again once it finishes."
+        ? t("spaceDetail.errRefreshBusy")
         : e.message?.includes("upload-sourced")
-        ? "Space refresh is only supported for git-sourced spaces."
-        : `Refresh failed: ${e.message}`;
+        ? t("spaceDetail.errRefreshUploadUnsupported")
+        : t("spaceDetail.errRefreshFailed", { message: e.message });
       showError(msg);
     } finally {
       setRefreshing(false);
@@ -232,7 +253,7 @@ export default function SpaceDetail() {
       if (isStickyAuthz(e)) { setAccessError(e); return; }
       // Transient 503: flag for the retry effect below (and show a retryable banner).
       if (e instanceof ApiError && e.isAuthorizationUnavailable) { setSpaceUnavailable(true); return; }
-      showError(`Failed to load space details: ${e.message}`);
+      showError(t("spaceDetail.errLoadSpace", { message: e.message }));
     }
   }, [spaceId]);
 
@@ -309,7 +330,7 @@ export default function SpaceDetail() {
       if (typeFilter.value) params.type = typeFilter.value;
       setComponents(await api.listComponents(spaceId, params));
       setSearchedPattern(searchPattern.trim());
-    } catch (e: any) { showError(`Component search failed: ${e.message}`); }
+    } catch (e: any) { showError(t("spaceDetail.errComponentSearch", { message: e.message })); }
     finally { setCompLoading(false); }
   };
 
@@ -321,7 +342,7 @@ export default function SpaceDetail() {
       setSemanticResults(await api.semanticSearch(spaceId, semanticQuery.trim(), parseInt(semanticTopK) || defaultTopK));
       setSearchedSemanticQuery(semanticQuery.trim());
     }
-    catch (e: any) { showError(`Semantic search failed: ${e.message}`); }
+    catch (e: any) { showError(t("spaceDetail.errSemanticSearch", { message: e.message })); }
     finally { setSemanticLoading(false); }
   };
 
@@ -333,7 +354,7 @@ export default function SpaceDetail() {
       setSyntacticDetail(await api.findComponent(spaceId, name));
       setTimeout(() => syntacticDetailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
     }
-    catch (e: any) { showError(`Failed to load component: ${e.message}`); }
+    catch (e: any) { showError(t("spaceDetail.errLoadComponent", { message: e.message })); }
     finally { setSyntacticDetailLoading(false); }
   };
 
@@ -344,7 +365,7 @@ export default function SpaceDetail() {
       setSemanticDetail(await api.findComponent(spaceId, name));
       setTimeout(() => semanticDetailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
     }
-    catch (e: any) { showError(`Failed to load component: ${e.message}`); }
+    catch (e: any) { showError(t("spaceDetail.errLoadComponent", { message: e.message })); }
     finally { setSemanticDetailLoading(false); }
   };
 
@@ -352,7 +373,7 @@ export default function SpaceDetail() {
     if (!spaceId || !syntacticDetail) return;
     setSyntacticFlowLoading(true);
     try { setSyntacticFlow(await api.traceFlow(spaceId, syntacticDetail.name)); }
-    catch (e: any) { showError(`Flow trace failed: ${e.message}`); }
+    catch (e: any) { showError(t("spaceDetail.errFlowTrace", { message: e.message })); }
     finally { setSyntacticFlowLoading(false); }
   };
 
@@ -360,7 +381,7 @@ export default function SpaceDetail() {
     if (!spaceId || !semanticDetail) return;
     setSemanticFlowLoading(true);
     try { setSemanticFlow(await api.traceFlow(spaceId, semanticDetail.name)); }
-    catch (e: any) { showError(`Flow trace failed: ${e.message}`); }
+    catch (e: any) { showError(t("spaceDetail.errFlowTrace", { message: e.message })); }
     finally { setSemanticFlowLoading(false); }
   };
 
@@ -368,7 +389,7 @@ export default function SpaceDetail() {
     if (!spaceId || !syntacticDetail) return;
     setSyntacticDepsLoading(true);
     try { setSyntacticDeps(await api.showDependencies(spaceId, syntacticDetail.name)); }
-    catch (e: any) { showError(`Dependency analysis failed: ${e.message}`); }
+    catch (e: any) { showError(t("spaceDetail.errDependencies", { message: e.message })); }
     finally { setSyntacticDepsLoading(false); }
   };
 
@@ -376,7 +397,7 @@ export default function SpaceDetail() {
     if (!spaceId || !semanticDetail) return;
     setSemanticDepsLoading(true);
     try { setSemanticDeps(await api.showDependencies(spaceId, semanticDetail.name)); }
-    catch (e: any) { showError(`Dependency analysis failed: ${e.message}`); }
+    catch (e: any) { showError(t("spaceDetail.errDependencies", { message: e.message })); }
     finally { setSemanticDepsLoading(false); }
   };
 
@@ -396,7 +417,7 @@ export default function SpaceDetail() {
       });
     } catch (e: any) {
       setOverviewLoadFailed((prev) => ({ ...prev, [docKey]: true }));
-      showError(`Failed to load overview document: ${e.message}`);
+      showError(t("spaceDetail.errLoadOverviewDoc", { message: e.message }));
     } finally {
       setOverviewLoading((prev) => ({ ...prev, [docKey]: false }));
     }
@@ -410,7 +431,7 @@ export default function SpaceDetail() {
   // Docs carry no top-level H1 (stripped defensively), so headings don't double up.
   const combinedOverviewMd = allOverviewDocsLoaded
     ? [
-        `# ${space?.space_name || spaceId} — Space Overview`,
+        t("spaceDetail.combinedTitle", { name: space?.space_name || spaceId }),
         "",
         ...overviewDocDefs.flatMap((d) => [
           `## ${d.title}`,
@@ -423,17 +444,18 @@ export default function SpaceDetail() {
 
   // Generate (or regenerate from scratch) the Space Overview. Clears any
   // locally-cached doc content so freshly generated docs are re-fetched.
-  const generateOverview = async () => {
+  const generateOverview = async (language: string) => {
     if (!spaceId || overviewGenerating || isRefreshing) return;
     setOverviewSubmitting(true);
     try {
-      await api.generateOverview(spaceId);
+      await api.generateOverview(spaceId, language);
+      setSpace((prev) => (prev ? { ...prev, overview_language: language } : prev));
       setOverviewDocs({});
       setOverviewLoadFailed({});
       setActiveOverviewDoc(null);
       await loadStatus();
     } catch (e: any) {
-      showError(`Failed to start overview generation: ${e.message}`);
+      showError(t("spaceDetail.errStartOverview", { message: e.message }));
     } finally {
       setOverviewSubmitting(false);
     }
@@ -483,10 +505,10 @@ export default function SpaceDetail() {
         <Breadcrumbs spaceId={spaceId!} navigate={navigate} />
         <Alert
           type="error"
-          header={expired ? "Your git token has expired" : "You don't have access to this space"}
+          header={expired ? t("spaceDetail.accessExpiredHeader") : t("spaceDetail.accessDeniedHeader")}
           action={
             expired ? (
-              <Button onClick={() => navigate(GIT_CREDS_PATH)}>Git credentials</Button>
+              <Button onClick={() => navigate(GIT_CREDS_PATH)}>{t("spaceDetail.gitCredentials")}</Button>
             ) : undefined
           }
         >
@@ -504,10 +526,10 @@ export default function SpaceDetail() {
         <Breadcrumbs spaceId={spaceId!} navigate={navigate} />
         <Alert
           type="warning"
-          header="Couldn't check your git permissions"
-          action={<Button onClick={() => loadStatus()}>Retry</Button>}
+          header={t("spaceDetail.gitPermHeader")}
+          action={<Button onClick={() => loadStatus()}>{t("spaceDetail.retry")}</Button>}
         >
-          We couldn't reach your git provider to load this space. Retrying automatically…
+          {t("spaceDetail.gitProviderUnreachable")}
         </Alert>
       </SpaceBetween>
     );
@@ -519,24 +541,19 @@ export default function SpaceDetail() {
     <Modal
       visible={deleteVisible}
       onDismiss={() => setDeleteVisible(false)}
-      header="Delete space"
+      header={t("spaceDetail.deleteHeader")}
       footer={
         <Box float="right">
           <SpaceBetween direction="horizontal" size="xs">
-            <Button onClick={() => setDeleteVisible(false)}>Cancel</Button>
+            <Button onClick={() => setDeleteVisible(false)}>{t("common.cancel")}</Button>
             <Button variant="primary" loading={deleting} onClick={handleConfirmDelete}>
-              Delete
+              {t("spaceDetail.delete")}
             </Button>
           </SpaceBetween>
         </Box>
       }
     >
-      Delete space <Box variant="code">{space?.space_id ?? spaceId}</Box>?
-
-      This will delete all associated data including component catalog,
-      local copy of source code and vectorized function summaries.
-
-      This action cannot be undone.
+      {t("spaceDetail.deleteConfirmPrefix")}{" "}<Box variant="code">{space?.space_id ?? spaceId}</Box>{t("spaceDetail.deleteConfirmSuffix")}{" "}{t("spaceDetail.deleteWarning")}
     </Modal>
   );
 
@@ -544,11 +561,11 @@ export default function SpaceDetail() {
     <Modal
       visible={refreshConfirmVisible}
       onDismiss={() => setRefreshConfirmVisible(false)}
-      header="Exclusion patterns have changed"
+      header={t("spaceDetail.refreshConfirmHeader")}
       footer={
         <Box float="right">
           <SpaceBetween direction="horizontal" size="xs">
-            <Button onClick={() => setRefreshConfirmVisible(false)}>Cancel</Button>
+            <Button onClick={() => setRefreshConfirmVisible(false)}>{t("common.cancel")}</Button>
             <Button
               variant="primary"
               onClick={() => {
@@ -556,15 +573,13 @@ export default function SpaceDetail() {
                 handleRefresh();
               }}
             >
-              Refresh with original patterns
+              {t("spaceDetail.refreshWithOriginal")}
             </Button>
           </SpaceBetween>
         </Box>
       }
     >
-      The system-wide exclusion patterns have changed since this space was created. A space's
-      exclusion patterns are fixed for its lifetime, so refresh keeps applying the patterns it was
-      created with. To use the current system-wide patterns, delete this space and create a new one.
+      {t("spaceDetail.refreshConfirmBody")}
     </Modal>
   );
 
@@ -577,14 +592,13 @@ export default function SpaceDetail() {
         <Header variant="h1" description={status?.space_name ? spaceId : undefined}>
           {status?.space_name || spaceId}
         </Header>
-        <Container header={<Header variant="h2">Deleting space</Header>}>
+        <Container header={<Header variant="h2">{t("spaceDetail.deletingHeader")}</Header>}>
           <SpaceBetween size="xs">
             <StatusIndicator type="in-progress">
-              Deleting space and all associated data...
+              {t("spaceDetail.deletingStatus")}
             </StatusIndicator>
             <Box color="text-body-secondary" fontSize="body-s">
-              This page refreshes automatically every 5 seconds. You'll be
-              returned to the space list once deletion completes.
+              {t("spaceDetail.deletingNote")}
             </Box>
           </SpaceBetween>
         </Container>
@@ -613,23 +627,23 @@ export default function SpaceDetail() {
         <Header variant="h1" description={status?.space_name ? spaceId : undefined}>
           {status?.space_name || spaceId}
         </Header>
-        <Container header={<Header variant="h2">{refreshWithoutSnapshot ? "Refresh in progress" : "Analysis in progress"}</Header>}>
+        <Container header={<Header variant="h2">{refreshWithoutSnapshot ? t("spaceDetail.refreshInProgress") : t("spaceDetail.analysisInProgress")}</Header>}>
           <SpaceBetween size="l">
             <SpaceBetween size="xs">
               <StatusIndicator type="in-progress">
                 {status?.current_step
-                  ? STEP_LABELS[status.current_step] ?? status.current_step
+                  ? t(`spaceDetail.step.${status.current_step}`, { defaultValue: status.current_step })
                   : refreshWithoutSnapshot
-                  ? "Starting refresh..."
-                  : "Starting analysis..."}
+                  ? t("spaceDetail.startingRefresh")
+                  : t("spaceDetail.startingAnalysis")}
               </StatusIndicator>
               {(status?.current_step === "summarize" || status?.current_step === "summarize_changed") && status.summarize_total != null && status.summarize_total > 0 && (
                 <ProgressBar
                   value={status.summarize_percent ?? 0}
-                  description={`Summarized ${status.summarize_done ?? 0} of ${status.summarize_total} functions`}
-                  additionalInfo="Early progress is slower by design — the deepest functions are summarized individually first, then shallower ones in fast batches."
-                  label="AI Summarization"
-                  resultText={`Summarized ${status.summarize_total} functions`}
+                  description={t("spaceDetail.summarizedProgress", { done: status.summarize_done ?? 0, total: status.summarize_total })}
+                  additionalInfo={t("spaceDetail.summarizeInfo")}
+                  label={t("spaceDetail.aiSummarization")}
+                  resultText={t("spaceDetail.summarizedResult", { total: status.summarize_total })}
                 />
               )}
               {status?.business_context && (
@@ -640,22 +654,22 @@ export default function SpaceDetail() {
                 />
               )}
               <Box color="text-body-secondary" fontSize="body-s">
-                This page refreshes automatically every 5 seconds.
+                {t("spaceDetail.autoRefresh5")}
               </Box>
             </SpaceBetween>
             {status?.git_url && (
               <KeyValuePairs columns={2} items={[
-                { label: "Repository", value: <Box variant="code">{status.git_url}</Box> },
-                { label: "Branch", value: <Box variant="code">{status.branch ?? "main"}</Box> },
+                { label: t("spaceDetail.repository"), value: <Box variant="code">{status.git_url}</Box> },
+                { label: t("spaceDetail.branch"), value: <Box variant="code">{status.branch ?? "main"}</Box> },
                 ...(status.git_commit_hash
-                  ? [{ label: "Commit", value: <Box variant="code">{status.git_commit_hash.slice(0, 12)}</Box> }]
+                  ? [{ label: t("spaceDetail.commit"), value: <Box variant="code">{status.git_commit_hash.slice(0, 12)}</Box> }]
                   : []),
-                ...(status.created_by ? [{ label: "Created by", value: status.created_by }] : []),
+                ...(status.created_by ? [{ label: t("spaceDetail.createdBy"), value: status.created_by }] : []),
                 // started_at is set at creation; created_at only lands at READY, so fall back.
                 // Rendered in UTC to match the Pipeline steps table below.
                 ...(status.started_at || status.created_at
                   ? [{
-                      label: "Created",
+                      label: t("spaceDetail.created"),
                       value: new Date((status.started_at ?? status.created_at)!).toLocaleString([], {
                         year: "numeric",
                         month: "short",
@@ -672,18 +686,18 @@ export default function SpaceDetail() {
               (status.statistics.total_lines != null || status.statistics.files_analyzed != null) && (
                 <SpaceBetween size="xs">
                   <Box color="text-body-secondary" fontSize="body-s">
-                    Repository scale — larger codebases take longer to summarize.
+                    {t("spaceDetail.repoScale")}
                   </Box>
                   <KeyValuePairs columns={3} items={[
                     {
-                      label: "Lines of code",
+                      label: t("spaceDetail.linesOfCode"),
                       value: status.statistics.total_lines != null
                         ? Number(status.statistics.total_lines).toLocaleString()
                         : "—",
                     },
-                    { label: "Files analyzed", value: status.statistics.files_analyzed ?? "—" },
+                    { label: t("spaceDetail.filesAnalyzed"), value: status.statistics.files_analyzed ?? "—" },
                     {
-                      label: "Languages",
+                      label: t("spaceDetail.languages"),
                       value: Object.keys(status.statistics.components_by_language ?? {}).join(", ") || "—",
                     },
                   ]} />
@@ -693,8 +707,8 @@ export default function SpaceDetail() {
               <Table
                 items={buildPipelineItems(steps, stepOrder, status?.current_step)}
                 trackBy="step"
-                header={<Header variant="h3">Pipeline steps</Header>}
-                columnDefinitions={pipelineColumnDefs}
+                header={<Header variant="h3">{t("spaceDetail.pipelineSteps")}</Header>}
+                columnDefinitions={getPipelineColumnDefs(t)}
               />
             )}
           </SpaceBetween>
@@ -709,15 +723,15 @@ export default function SpaceDetail() {
       <SpaceBetween size="l">
         <Breadcrumbs spaceId={spaceId!} navigate={navigate} />
         <Flashbar items={flash} />
-        <Header variant="h1" info={<StatusIndicator type="error">Failed</StatusIndicator>}
+        <Header variant="h1" info={<StatusIndicator type="error">{t("common.statusFailed")}</StatusIndicator>}
           description={status?.space_name ? spaceId : undefined}
           actions={<SpaceBetween direction="horizontal" size="xs">
-            <Button onClick={() => navigate("/")}>Back to spaces</Button>
-            <Button onClick={() => setDeleteVisible(true)}>Delete</Button>
+            <Button onClick={() => navigate("/")}>{t("spaceDetail.backToSpaces")}</Button>
+            <Button onClick={() => setDeleteVisible(true)}>{t("spaceDetail.delete")}</Button>
           </SpaceBetween>}>
           {status?.space_name || spaceId}
         </Header>
-        <Container header={<Header variant="h2">Analysis failed</Header>}>
+        <Container header={<Header variant="h2">{t("spaceDetail.analysisFailed")}</Header>}>
           <SpaceBetween size="m">
             {status?.error ? (
               <Box variant="p">
@@ -725,8 +739,7 @@ export default function SpaceDetail() {
               </Box>
             ) : (
               <Box variant="p">
-                The analysis pipeline encountered an error. Check the service
-                logs for details, or try creating the space again.
+                {t("spaceDetail.analysisFailedBody")}
               </Box>
             )}
           </SpaceBetween>
@@ -742,8 +755,8 @@ export default function SpaceDetail() {
       <SpaceBetween size="l">
         <Breadcrumbs spaceId={spaceId!} navigate={navigate} />
         <Box textAlign="center" padding="xxl">
-          <b>Space not found</b>
-          <Box padding={{ top: "s" }}><Button onClick={() => navigate("/")}>Back to spaces</Button></Box>
+          <b>{t("spaceDetail.spaceNotFound")}</b>
+          <Box padding={{ top: "s" }}><Button onClick={() => navigate("/")}>{t("spaceDetail.backToSpaces")}</Button></Box>
         </Box>
       </SpaceBetween>
     );
@@ -759,10 +772,10 @@ export default function SpaceDetail() {
           <Breadcrumbs spaceId={spaceId!} navigate={navigate} />
           <Alert
             type="warning"
-            header="Couldn't check your git permissions"
-            action={<Button onClick={() => loadSpace()}>Retry</Button>}
+            header={t("spaceDetail.gitPermHeader")}
+            action={<Button onClick={() => loadSpace()}>{t("spaceDetail.retry")}</Button>}
           >
-            We couldn't reach your git provider to load this space. Retrying automatically…
+            {t("spaceDetail.gitProviderUnreachable")}
           </Alert>
         </SpaceBetween>
       );
@@ -803,29 +816,27 @@ export default function SpaceDetail() {
   // fill, which makes the nested progress bar and step table unreadable.
   const liveRefreshRun = (status?.refresh_pipeline_runs ?? []).slice(-1)[0];
   const refreshBanner = isRefreshing ? (
-    <Alert type="info" header="Refresh in progress">
+    <Alert type="info" header={t("spaceDetail.refreshInProgress")}>
       <SpaceBetween size="s">
         <StatusIndicator type="in-progress">
           {status?.current_step
-            ? STEP_LABELS[status.current_step] ?? status.current_step
-            : "Starting refresh..."}
+            ? t(`spaceDetail.step.${status.current_step}`, { defaultValue: status.current_step })
+            : t("spaceDetail.startingRefresh")}
         </StatusIndicator>
         <Box color="text-body-secondary" fontSize="body-s">
-          Showing the last indexed snapshot
-          {space!.git_commit_hash ? ` (${space!.git_commit_hash.slice(0, 7)})` : ""}. Semantic
-          search may return incomplete results until the refresh commits.
+          {t("spaceDetail.refreshSnapshotNote", { commit: space!.git_commit_hash ? ` (${space!.git_commit_hash.slice(0, 7)})` : "" })}
         </Box>
         {status?.current_step === "summarize_changed" &&
           status.summarize_total != null &&
           status.summarize_total > 0 && (
             <ProgressBar
               value={status.summarize_percent ?? 0}
-              description={`Summarized ${status.summarize_done ?? 0} of ${status.summarize_total} changed functions`}
-              label="AI Summarization"
+              description={t("spaceDetail.summarizedChanged", { done: status.summarize_done ?? 0, total: status.summarize_total })}
+              label={t("spaceDetail.aiSummarization")}
             />
           )}
         {(liveRefreshRun?.steps ?? []).length > 0 && (
-          <ExpandableSection headerText="Refresh steps" variant="footer">
+          <ExpandableSection headerText={t("spaceDetail.refreshSteps")} variant="footer">
             <Table
               items={buildPipelineItems(
                 liveRefreshRun?.steps ?? [],
@@ -833,7 +844,7 @@ export default function SpaceDetail() {
                 status?.current_step,
               )}
               trackBy="step"
-              columnDefinitions={pipelineColumnDefs}
+              columnDefinitions={getPipelineColumnDefs(t)}
               variant="embedded"
             />
           </ExpandableSection>
@@ -855,27 +866,31 @@ export default function SpaceDetail() {
   if (hasStaleOverviews) {
     bannerItems.push({
       type: "warning",
-      content: "One or more Space Overview documents are out of date following a recent refresh.",
+      content: t("spaceDetail.staleOverviews"),
       action: (
-        <Button
+        <ButtonDropdown
+          items={overviewLanguageItems}
           disabled={!overviewEnabled || isRefreshing}
           disabledReason={
             !overviewEnabled
-              ? "Overview generation is disabled on this instance."
+              ? t("spaceDetail.overviewDisabled")
               : undefined
           }
-          onClick={async () => {
+          ariaLabel={t("spaceDetail.overviewLanguageLabel")}
+          expandToViewport
+          onItemClick={async ({ detail }) => {
             if (!spaceId) return;
             try {
-              await api.generateOverview(spaceId);
+              await api.generateOverview(spaceId, detail.id);
+              setSpace((prev) => (prev ? { ...prev, overview_language: detail.id } : prev));
               await loadStatus();
             } catch (e: any) {
-              showError(`Failed to start overview generation: ${e.message}`);
+              showError(t("spaceDetail.errStartOverview", { message: e.message }));
             }
           }}
         >
-          Regenerate overview
-        </Button>
+          {t("spaceDetail.regenerateOverview")}
+        </ButtonDropdown>
       ),
       dismissible: true,
       onDismiss: () => {/* allow dismiss */},
@@ -887,8 +902,8 @@ export default function SpaceDetail() {
       type: "warning",
       content: (
         <SpaceBetween size="xs">
-          <span>Some vector operations failed during the last refresh ({refreshErrors.length} component{refreshErrors.length > 1 ? "s" : ""} affected).</span>
-          <ExpandableSection headerText="Show affected component IDs" variant="footer">
+          <span>{t("spaceDetail.vectorOpsFailed", { count: refreshErrors.length })}</span>
+          <ExpandableSection headerText={t("spaceDetail.showAffectedIds")} variant="footer">
             <SpaceBetween size="xxs">
               {refreshErrors.map((id) => (
                 <Box key={id} variant="code" fontSize="body-s">{id}</Box>
@@ -904,11 +919,10 @@ export default function SpaceDetail() {
   }
 
   const refreshFailedBanner = isRefreshFailed ? (
-    <Alert type="error" header="Refresh failed">
+    <Alert type="error" header={t("spaceDetail.refreshFailed")}>
       <SpaceBetween size="s">
         <Box variant="p">
-          Search may return partly updated results until a refresh completes. Check the
-          error below, then use Refresh space to finish.
+          {t("spaceDetail.refreshFailedNote")}
         </Box>
         {status?.error && (
           <Box variant="p">
@@ -916,11 +930,11 @@ export default function SpaceDetail() {
           </Box>
         )}
         {(liveRefreshRun?.steps ?? []).length > 0 && (
-          <ExpandableSection headerText="Refresh steps" variant="footer">
+          <ExpandableSection headerText={t("spaceDetail.refreshSteps")} variant="footer">
             <Table
               items={buildPipelineItems(liveRefreshRun?.steps ?? [], REFRESH_STEP_ORDER)}
               trackBy="step"
-              columnDefinitions={pipelineColumnDefs}
+              columnDefinitions={getPipelineColumnDefs(t)}
               variant="embedded"
             />
           </ExpandableSection>
@@ -938,30 +952,30 @@ export default function SpaceDetail() {
         info={
           <SpaceBetween direction="horizontal" size="xs">
             {isRefreshing
-              ? <StatusIndicator type="in-progress">Refreshing</StatusIndicator>
+              ? <StatusIndicator type="in-progress">{t("common.statusRefreshing")}</StatusIndicator>
               : isRefreshFailed
-              ? <StatusIndicator type="error">Refresh failed</StatusIndicator>
-              : <StatusIndicator type="success">Ready</StatusIndicator>}
+              ? <StatusIndicator type="error">{t("spaceDetail.refreshFailed")}</StatusIndicator>
+              : <StatusIndicator type="success">{t("common.statusReady")}</StatusIndicator>}
             {space!.visibility && (
               <Badge color={space!.visibility === "public" ? "blue" : "grey"}>
-                {space!.visibility === "public" ? "Public" : "Private"}
+                {space!.visibility === "public" ? t("spaceDetail.public") : t("spaceDetail.private")}
               </Badge>
             )}
           </SpaceBetween>
         }
         description={(space!.space_name || status?.space_name) ? space!.space_id : undefined}
         actions={<SpaceBetween direction="horizontal" size="xs">
-          <Button onClick={() => navigate("/")}>Back to spaces</Button>
+          <Button onClick={() => navigate("/")}>{t("spaceDetail.backToSpaces")}</Button>
           {status?.git_url != null && (
             <Button
               loading={refreshing || isRefreshing}
               disabled={refreshing || isRefreshing}
               onClick={requestRefresh}
             >
-              Refresh space
+              {t("spaceDetail.refreshSpace")}
             </Button>
           )}
-          <Button onClick={() => setDeleteVisible(true)} disabled={isRefreshing}>Delete</Button>
+          <Button onClick={() => setDeleteVisible(true)} disabled={isRefreshing}>{t("spaceDetail.delete")}</Button>
         </SpaceBetween>}>
         {space!.space_name || status?.space_name || space!.space_id}
       </Header>
@@ -971,28 +985,28 @@ export default function SpaceDetail() {
 
       {/* Last refresh summary */}
       {refreshResult && (
-        <Container header={<Header variant="h3">Last refresh</Header>}>
+        <Container header={<Header variant="h3">{t("spaceDetail.lastRefresh")}</Header>}>
           <ColumnLayout columns={4} variant="text-grid">
             <div>
-              <Box variant="awsui-key-label">Files</Box>
+              <Box variant="awsui-key-label">{t("spaceDetail.files")}</Box>
               <Box variant="p">
-                {refreshResult.files_added} added, {refreshResult.files_modified} modified, {refreshResult.files_removed} removed
+                {t("spaceDetail.filesSummary", { added: refreshResult.files_added, modified: refreshResult.files_modified, removed: refreshResult.files_removed })}
               </Box>
             </div>
             <div>
-              <Box variant="awsui-key-label">Components</Box>
+              <Box variant="awsui-key-label">{t("spaceDetail.components")}</Box>
               <Box variant="p">
-                {refreshResult.components_added} added, {refreshResult.components_removed} removed, {refreshResult.components_reprocessed} reprocessed
+                {t("spaceDetail.componentsSummary", { added: refreshResult.components_added, removed: refreshResult.components_removed, reprocessed: refreshResult.components_reprocessed })}
               </Box>
             </div>
             <div>
-              <Box variant="awsui-key-label">Vectors</Box>
+              <Box variant="awsui-key-label">{t("spaceDetail.vectors")}</Box>
               <Box variant="p">
-                {refreshResult.vectors_upserted} upserted, {refreshResult.vectors_deleted} deleted
+                {t("spaceDetail.vectorsSummary", { upserted: refreshResult.vectors_upserted, deleted: refreshResult.vectors_deleted })}
               </Box>
             </div>
             <div>
-              <Box variant="awsui-key-label">Duration</Box>
+              <Box variant="awsui-key-label">{t("spaceDetail.duration")}</Box>
               <Box variant="p">
                 {refreshResult.duration_s < 60
                   ? `${Math.round(refreshResult.duration_s)}s`
@@ -1018,66 +1032,64 @@ export default function SpaceDetail() {
         }}
         tabs={[
         {
-          label: "Codebase",
+          label: t("spaceDetail.tabCodebase"),
           id: "codebase",
           content: (
             <SpaceBetween size="l">
               {skippedCount > 0 && (
-                <Alert type="info" header="Some files weren't analyzed">
-                  CodeKB skipped {skippedCount} file{skippedCount === 1 ? "" : "s"} written
-                  in languages it doesn't support yet: {skippedSummary}. Everything in a
-                  supported language was analyzed normally.
+                <Alert type="info" header={t("spaceDetail.skippedHeader")}>
+                  {t("spaceDetail.skippedBody", { count: skippedCount, languages: skippedSummary })}
                 </Alert>
               )}
-              <Container header={<Header variant="h2">Codebase statistics</Header>}>
+              <Container header={<Header variant="h2">{t("spaceDetail.codebaseStatistics")}</Header>}>
                 <SpaceBetween size="l">
                   <ColumnLayout columns={3} variant="text-grid">
-                    <StatBox label="Components" value={space!.component_count} detail="Functions, classes, methods" />
-                    <StatBox label="Lines of code" value={stats.total_lines ? Number(stats.total_lines).toLocaleString() : "—"} detail="Total lines across all files" />
-                    <StatBox label="Files analyzed" value={stats.files_analyzed ?? "—"} detail={`Across ${languages.length} language(s)`} />
+                    <StatBox label={t("spaceDetail.components")} value={space!.component_count} detail={t("spaceDetail.componentsDetail")} />
+                    <StatBox label={t("spaceDetail.linesOfCode")} value={stats.total_lines ? Number(stats.total_lines).toLocaleString() : "—"} detail={t("spaceDetail.linesDetail")} />
+                    <StatBox label={t("spaceDetail.filesAnalyzed")} value={stats.files_analyzed ?? "—"} detail={t("spaceDetail.filesDetail", { count: languages.length })} />
                   </ColumnLayout>
                   <ColumnLayout columns={3} variant="text-grid">
-                    <StatBox label="Vectors" value={space!.vector_count} detail="Summarized components" />
-                    <StatBox label="Languages" value={languages.length} detail={languages.join(", ") || "—"} />
-                    <StatBox label="Skipped files" value={skippedCount || "—"} detail={skippedCount > 0 ? `Unsupported: ${skippedLangs.join(", ")}` : "All supported files analyzed"} />
+                    <StatBox label={t("spaceDetail.vectors")} value={space!.vector_count} detail={t("spaceDetail.vectorsDetail")} />
+                    <StatBox label={t("spaceDetail.languages")} value={languages.length} detail={languages.join(", ") || "—"} />
+                    <StatBox label={t("spaceDetail.skippedFiles")} value={skippedCount || "—"} detail={skippedCount > 0 ? t("spaceDetail.unsupportedDetail", { languages: skippedLangs.join(", ") }) : t("spaceDetail.allSupportedAnalyzed")} />
                   </ColumnLayout>
                 </SpaceBetween>
               </Container>
 
               {/* Space details */}
-              <ExpandableSection variant="container" headerText="Space details"
-                headerDescription="Space ID, git URL, version, and other metadata">
+              <ExpandableSection variant="container" headerText={t("spaceDetail.spaceDetails")}
+                headerDescription={t("spaceDetail.spaceDetailsDesc")}>
                 <KeyValuePairs columns={2} items={[
-                  { label: "Space ID", value: <Box variant="code">{space!.space_id}</Box> },
-                  { label: "Git URL", value: space!.git_url ? <Box variant="code">{space!.git_url}</Box> : "—" },
-                  { label: "Commit hash", value: space!.git_commit_hash ? <Box variant="code">{space!.git_commit_hash}</Box> : "—" },
-                  { label: "Source directory", value: <Box variant="code">{space!.source_directory}</Box> },
-                  { label: "Version", value: space!.version },
+                  { label: t("spaceDetail.spaceId"), value: <Box variant="code">{space!.space_id}</Box> },
+                  { label: t("spaceDetail.gitUrl"), value: space!.git_url ? <Box variant="code">{space!.git_url}</Box> : "—" },
+                  { label: t("spaceDetail.commitHash"), value: space!.git_commit_hash ? <Box variant="code">{space!.git_commit_hash}</Box> : "—" },
+                  { label: t("spaceDetail.sourceDirectory"), value: <Box variant="code">{space!.source_directory}</Box> },
+                  { label: t("spaceDetail.version"), value: space!.version },
                   {
-                    label: "Visibility",
+                    label: t("spaceDetail.visibility"),
                     value: space!.visibility ? (
                       <Badge color={space!.visibility === "public" ? "blue" : "grey"}>
-                        {space!.visibility === "public" ? "Public" : "Private"}
+                        {space!.visibility === "public" ? t("spaceDetail.public") : t("spaceDetail.private")}
                       </Badge>
                     ) : (
                       "—"
                     ),
                   },
-                  { label: "Created by", value: space!.created_by || "—" },
+                  { label: t("spaceDetail.createdBy"), value: space!.created_by || "—" },
                   {
-                    label: "Bedrock model",
+                    label: t("spaceDetail.bedrockModel"),
                     value: status?.bedrock_model?.model_id
                       ? <Box variant="code">{status.bedrock_model.model_id}</Box>
                       : "—",
                   },
                   {
-                    label: "Bedrock region",
+                    label: t("spaceDetail.bedrockRegion"),
                     value: status?.bedrock_model?.region
                       ? <Box variant="code">{status.bedrock_model.region}</Box>
                       : "—",
                   },
                   {
-                    label: "Created at",
+                    label: t("spaceDetail.createdAt"),
                     value: space!.created_at
                       ? new Date(space!.created_at).toLocaleString(undefined, {
                           year: "numeric",
@@ -1088,10 +1100,10 @@ export default function SpaceDetail() {
                         })
                       : "—",
                   },
-                  { label: "Languages detected", value: <SpaceBetween direction="horizontal" size="xs">{languages.map((l) => <Badge key={l} color="blue">{l}</Badge>)}</SpaceBetween> },
-                  { label: "Components by type", value: <SpaceBetween size="xxs">{Object.entries(byType).map(([t, c]) => <div key={t}>{t}: {c as number}</div>)}</SpaceBetween> },
+                  { label: t("spaceDetail.languagesDetected"), value: <SpaceBetween direction="horizontal" size="xs">{languages.map((l) => <Badge key={l} color="blue">{l}</Badge>)}</SpaceBetween> },
+                  { label: t("spaceDetail.componentsByType"), value: <SpaceBetween size="xxs">{Object.entries(byType).map(([typeName, c]) => <div key={typeName}>{typeName}: {c as number}</div>)}</SpaceBetween> },
                   ...(skippedCount > 0 ? [{
-                    label: "Skipped (unsupported languages)",
+                    label: t("spaceDetail.skippedUnsupported"),
                     value: <SpaceBetween direction="horizontal" size="xs">{skippedLangs.map((l) => <Badge key={l} color="grey">{l}: {skippedByLang[l]}</Badge>)}</SpaceBetween>,
                   }] : []),
                 ]} />
@@ -1108,8 +1120,8 @@ export default function SpaceDetail() {
                 (status?.refresh_pipeline_runs ?? []).length > 0) && (
                 <ExpandableSection
                   variant="container"
-                  headerText="Analysis pipeline"
-                  headerDescription="Timing and status of each pipeline run: initial space creation and every space refresh"
+                  headerText={t("spaceDetail.analysisPipeline")}
+                  headerDescription={t("spaceDetail.analysisPipelineDesc")}
                 >
                   <SpaceBetween size="xs">
                     {/* Newest refresh first; chronological #N numbering preserved */}
@@ -1121,13 +1133,13 @@ export default function SpaceDetail() {
                         return (
                         <ExpandableSection
                           key={run.started_at ?? num}
-                          headerText={when ? `Space refresh - ${num} (${when})` : `Space refresh - ${num}`}
+                          headerText={when ? t("spaceDetail.spaceRefreshRunWhen", { num, when }) : t("spaceDetail.spaceRefreshRun", { num })}
                           defaultExpanded={idx === 0}
                         >
                           <Table
                             items={buildPipelineItems(run.steps ?? [], REFRESH_STEP_ORDER)}
                             trackBy="step"
-                            columnDefinitions={pipelineColumnDefs}
+                            columnDefinitions={getPipelineColumnDefs(t)}
                           />
                         </ExpandableSection>
                         );
@@ -1138,15 +1150,15 @@ export default function SpaceDetail() {
                         headerText={(() => {
                           const when = fmtRunStart(status?.pipeline_steps ?? []);
                           return when
-                            ? `Initial space creation (${when})`
-                            : "Initial space creation";
+                            ? t("spaceDetail.initialCreationWhen", { when })
+                            : t("spaceDetail.initialCreation");
                         })()}
                         defaultExpanded={(status?.refresh_pipeline_runs ?? []).length === 0}
                       >
                         <Table
                           items={buildPipelineItems(status?.pipeline_steps ?? [], PIPELINE_STEP_ORDER)}
                           trackBy="step"
-                          columnDefinitions={pipelineColumnDefs}
+                          columnDefinitions={getPipelineColumnDefs(t)}
                         />
                       </ExpandableSection>
                     )}
@@ -1162,51 +1174,53 @@ export default function SpaceDetail() {
               )}
 
               {/* Exclusion patterns (fixed when the space was created) */}
-              <ExpandableSection variant="container" headerText="Exclusion patterns"
+              <ExpandableSection variant="container" headerText={t("spaceDetail.exclusionPatterns")}
                 headerCounter={`(${(space!.exclude_patterns ?? []).length})`}
-                headerDescription="Files and folders matching these patterns are not indexed in this space">
+                headerDescription={t("spaceDetail.exclusionDesc")}>
                 <Box variant="pre">{(space!.exclude_patterns ?? []).join("\n")}</Box>
               </ExpandableSection>
             </SpaceBetween>
           ),
         },
         {
-          label: "Space Overview",
+          label: t("spaceDetail.tabOverview"),
           id: "overview-docs",
           content: overviewDocDefs.length > 0 ? (
             <SpaceBetween size="l">
               <Header
                 variant="h2"
-                description="AI-generated documentation summarizing this codebase. Regenerating deletes the current documents and rebuilds them from scratch."
+                description={t("spaceDetail.overviewDesc")}
                 actions={
                   <SpaceBetween direction="horizontal" size="xs">
                     <CopyButton
                       variant="normal"
-                      label="Copy as Markdown"
+                      label={t("spaceDetail.copyAsMarkdown")}
                       text={combinedOverviewMd}
                       disabled={!allOverviewDocsLoaded || overviewGenerating}
                     />
-                    <Button
-                      iconName="refresh"
+                    <ButtonDropdown
+                      items={overviewLanguageItems}
                       loading={overviewGenerating}
                       disabled={!overviewEnabled || overviewGenerating || isRefreshing}
                       disabledReason={
                         !overviewEnabled
-                          ? "Overview generation is disabled on this instance."
+                          ? t("spaceDetail.overviewDisabled")
                           : undefined
                       }
-                      onClick={generateOverview}
+                      ariaLabel={t("spaceDetail.overviewLanguageLabel")}
+                      expandToViewport
+                      onItemClick={({ detail }) => void generateOverview(detail.id)}
                     >
-                      Regenerate
-                    </Button>
+                      {t("spaceDetail.regenerate")}
+                    </ButtonDropdown>
                   </SpaceBetween>
                 }
               >
-                Space Overview
+                {t("spaceDetail.spaceOverview")}
               </Header>
               {overviewGenerating && (
                 <StatusIndicator type="in-progress">
-                  Regenerating Space Overview… existing documents are being rebuilt from scratch.
+                  {t("spaceDetail.regeneratingStatus")}
                 </StatusIndicator>
               )}
               {/* Nav card row */}
@@ -1219,7 +1233,7 @@ export default function SpaceDetail() {
                       key={doc.key}
                       className="overview-card-clickable"
                       role="button"
-                      aria-label={`View ${doc.title}`}
+                      aria-label={t("spaceDetail.viewDoc", { title: doc.title })}
                       title={doc.title}
                       tabIndex={0}
                       onClick={() => {
@@ -1295,9 +1309,9 @@ export default function SpaceDetail() {
                   ) : (
                     <Box textAlign="center" padding="l">
                       <SpaceBetween size="s">
-                        <span>Failed to load this document.</span>
+                        <span>{t("spaceDetail.loadDocFailed")}</span>
                         <Button iconName="refresh" onClick={() => loadOverviewDoc(activeOverviewDoc)}>
-                          Try again
+                          {t("spaceDetail.tryAgain")}
                         </Button>
                       </SpaceBetween>
                     </Box>
@@ -1310,27 +1324,29 @@ export default function SpaceDetail() {
               header={
                 <Header
                   variant="h2"
-                  description="Generate AI-powered documentation that summarizes your codebase architecture, components, and data flows."
+                  description={t("spaceDetail.generateDesc")}
                   actions={
                     !overviewGenerating ? (
-                      <Button
+                      <ButtonDropdown
                         variant="primary"
-                        iconName="gen-ai"
+                        items={overviewLanguageItems}
                         loading={overviewSubmitting}
                         disabled={!overviewEnabled || overviewSubmitting || isRefreshing}
                         disabledReason={
                           !overviewEnabled
-                            ? "Overview generation is disabled on this instance."
+                            ? t("spaceDetail.overviewDisabled")
                             : undefined
                         }
-                        onClick={generateOverview}
+                        ariaLabel={t("spaceDetail.overviewLanguageLabel")}
+                        expandToViewport
+                        onItemClick={({ detail }) => void generateOverview(detail.id)}
                       >
-                        Generate overview
-                      </Button>
+                        {t("spaceDetail.generateOverview")}
+                      </ButtonDropdown>
                     ) : undefined
                   }
                 >
-                  Space Overview
+                  {t("spaceDetail.spaceOverview")}
                 </Header>
               }
             >
@@ -1340,60 +1356,60 @@ export default function SpaceDetail() {
                     {(() => {
                       const done = status?.overview_done ?? 0;
                       const total = status?.overview_total ?? 0;
-                      if (total === 0 || done === 0) return "Exploring codebase structure...";
-                      const stepNames = ["Exploration", "Business Overview", "Application Architecture", "Technology Stack", "Deployment Architecture"];
-                      const currentStep = stepNames[Math.min(done, stepNames.length - 1)] ?? `Step ${done}`;
-                      return `Generating ${currentStep} (step ${done} of ${total})`;
+                      if (total === 0 || done === 0) return t("spaceDetail.exploring");
+                      const stepNames = ["exploration", "businessOverview", "applicationArchitecture", "technologyStack", "deploymentArchitecture"];
+                      const currentStep = t(`spaceDetail.overviewStep.${stepNames[Math.min(done, stepNames.length - 1)]}`);
+                      return t("spaceDetail.generatingStep", { step: currentStep, done, total });
                     })()}
                   </StatusIndicator>
                   <ProgressBar
                     value={status?.overview_percent ?? 0}
-                    label="Overview generation"
+                    label={t("spaceDetail.overviewGeneration")}
                     variant="flash"
                   />
                   <Box color="text-body-secondary" fontSize="body-s">
-                    This page refreshes automatically. The exploration phase may take several minutes before document generation begins.
+                    {t("spaceDetail.overviewWaitNote")}
                   </Box>
                 </SpaceBetween>
               ) : (
                 <Box color="text-body-secondary" fontSize="body-s">
-                  The overview uses AI to analyze your knowledge base and produce documents such as an architecture summary, component catalog, and data flow diagrams. Generation time and cost scale with codebase size.
+                  {t("spaceDetail.overviewExplain")}
                 </Box>
               )}
             </Container>
           ),
         },
         {
-          label: "Syntactic Search",
+          label: t("spaceDetail.tabSyntactic"),
           id: "components",
           content: (
             <SpaceBetween size="l">
-              <Table loading={compLoading} loadingText="Searching..." items={components} trackBy="id"
+              <Table loading={compLoading} loadingText={t("spaceDetail.searching")} items={components} trackBy="id"
                 empty={<Box textAlign="center" padding="l" color="inherit">
-                  {searchedPattern === null ? "Run a search to see components"
-                    : searchedPattern ? `No components match "${searchedPattern}"` : "No components found"}
+                  {searchedPattern === null ? t("spaceDetail.emptyComponents")
+                    : searchedPattern ? t("spaceDetail.emptyComponentsNoMatch", { pattern: searchedPattern }) : t("spaceDetail.emptyComponentsNone")}
                 </Box>}
-                header={<Header counter={`(${components.length})`}>Syntactic Results</Header>}
+                header={<Header counter={`(${components.length})`}>{t("spaceDetail.syntacticResults")}</Header>}
                 filter={
                   <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                     <div style={{ flex: 1 }}>
                       <Input value={searchPattern} onChange={({ detail }) => setSearchPattern(detail.value)}
-                        placeholder="Pattern (e.g. User*, *Service)" type="search"
+                        placeholder={t("spaceDetail.patternPlaceholder")} type="search"
                         onKeyDown={({ detail }) => { if (detail.key === "Enter") handleComponentSearch(); }} />
                     </div>
                     <div style={{ minWidth: "160px" }}>
-                      <Select selectedOption={typeFilter} onChange={({ detail }) => setTypeFilter(detail.selectedOption as any)} options={TYPE_OPTIONS} />
+                      <Select selectedOption={typeOptions.find((o) => o.value === typeFilter.value) ?? typeOptions[0]} onChange={({ detail }) => setTypeFilter(detail.selectedOption as any)} options={typeOptions} />
                     </div>
-                    <Button loading={compLoading} onClick={handleComponentSearch}>Search</Button>
+                    <Button loading={compLoading} onClick={handleComponentSearch}>{t("spaceDetail.search")}</Button>
                   </div>
                 }
                 columnDefinitions={[
-                  { id: "name", header: "Name", cell: (item) => <Button variant="inline-link" onClick={() => handleSelectSyntactic(item.name)}>{item.display_name ?? item.name}</Button>, sortingField: "name" },
-                  { id: "type", header: "Type", cell: (item) => item.type },
-                  { id: "language", header: "Language", cell: (item) => item.language },
-                  ...(showBusinessRelevance ? [{ id: "relevance", header: "Business relevance", cell: (item: Record<string, any>) => <BusinessRelevanceSummary behavior={item.business_behavior} /> }] : []),
-                  { id: "file", header: "File", cell: (item) => <Box variant="code" fontSize="body-s">{item.file_path}</Box> },
-                  { id: "lines", header: "Lines", cell: (item) => `${item.line_number}–${item.end_line_number}` },
+                  { id: "name", header: t("spaceDetail.colName"), cell: (item) => <Button variant="inline-link" onClick={() => handleSelectSyntactic(item.name)}>{item.display_name ?? item.name}</Button>, sortingField: "name" },
+                  { id: "type", header: t("spaceDetail.colType"), cell: (item) => item.type },
+                  { id: "language", header: t("spaceDetail.colLanguage"), cell: (item) => item.language },
+                  ...(showBusinessRelevance ? [{ id: "relevance", header: t("spaceDetail.businessRelevance"), cell: (item: Record<string, any>) => <BusinessRelevanceSummary behavior={item.business_behavior} /> }] : []),
+                  { id: "file", header: t("spaceDetail.colFile"), cell: (item) => <Box variant="code" fontSize="body-s">{item.file_path}</Box> },
+                  { id: "lines", header: t("spaceDetail.colLines"), cell: (item) => `${item.line_number}–${item.end_line_number}` },
                 ]} />
               {syntacticDetail && (
                 <div ref={syntacticDetailRef}>
@@ -1407,40 +1423,40 @@ export default function SpaceDetail() {
           ),
         },
         {
-          label: "Semantic Search",
+          label: t("spaceDetail.tabSemantic"),
           id: "semantic",
           content: (
             <SpaceBetween size="l">
-            <Table loading={semanticLoading} loadingText="Searching vector store..." items={semanticResults} trackBy="key" wrapLines
+            <Table loading={semanticLoading} loadingText={t("spaceDetail.searchingVectors")} items={semanticResults} trackBy="key" wrapLines
               empty={<Box textAlign="center" padding="l" color="inherit">
-                {searchedSemanticQuery === null ? "Enter a query to search the vector store"
-                  : `No results for "${searchedSemanticQuery}"`}
+                {searchedSemanticQuery === null ? t("spaceDetail.emptyVectors")
+                  : t("spaceDetail.emptyVectorsNoResults", { query: searchedSemanticQuery })}
               </Box>}
-              header={<Header counter={`(${semanticResults.length})`}>Semantic results</Header>}
+              header={<Header counter={`(${semanticResults.length})`}>{t("spaceDetail.semanticResults")}</Header>}
               filter={
                 <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                   <div style={{ flex: 1 }}>
                     <Input value={semanticQuery} onChange={({ detail }) => setSemanticQuery(detail.value)}
-                      placeholder="Describe what you're looking for in natural language..." type="search"
+                      placeholder={t("spaceDetail.queryPlaceholder")} type="search"
                       onKeyDown={({ detail }) => { if (detail.key === "Enter") handleSemanticSearch(); }} />
                   </div>
                   <div style={{ minWidth: "80px", display: "flex", alignItems: "center", gap: "4px" }}>
-                    <Box variant="awsui-key-label" fontSize="body-s">Top K</Box>
+                    <Box variant="awsui-key-label" fontSize="body-s">{t("spaceDetail.topK")}</Box>
                     <Input value={semanticTopK} onChange={({ detail }) => { semanticTopKTouched.current = true; setSemanticTopK(detail.value); }}
-                      type="number" inputMode="numeric" ariaLabel="Top K" />
+                      type="number" inputMode="numeric" ariaLabel={t("spaceDetail.topK")} />
                   </div>
-                  <Button loading={semanticLoading} onClick={handleSemanticSearch}>Search vectors</Button>
+                  <Button loading={semanticLoading} onClick={handleSemanticSearch}>{t("spaceDetail.searchVectors")}</Button>
                 </div>
               }
               columnDefinitions={[
-                { id: "key", header: "Component", cell: (item) => {
+                { id: "key", header: t("spaceDetail.colComponent"), cell: (item) => {
                   const name = item.key ?? "";
                   return <Button variant="inline-link" onClick={() => handleSelectSemantic(name)}>{item.display_name ?? name}</Button>;
                 }},
-                { id: "type", header: "Type", cell: (item) => item.metadata?.type ?? "—" },
-                { id: "space", header: "Space", cell: (item) => item.metadata?.space_id ?? "—" },
-                ...(showBusinessRelevance ? [{ id: "relevance", header: "Business relevance", cell: (item: Record<string, any>) => <BusinessRelevanceSummary behavior={item.metadata} /> }] : []),
-                { id: "description", header: "Description", cell: (item) => { const d = item.metadata?.description ?? ""; return <Box variant="p" fontSize="body-s">{d}</Box>; } },
+                { id: "type", header: t("spaceDetail.colType"), cell: (item) => item.metadata?.type ?? "—" },
+                { id: "space", header: t("spaceDetail.colSpace"), cell: (item) => item.metadata?.space_id ?? "—" },
+                ...(showBusinessRelevance ? [{ id: "relevance", header: t("spaceDetail.businessRelevance"), cell: (item: Record<string, any>) => <BusinessRelevanceSummary behavior={item.metadata} /> }] : []),
+                { id: "description", header: t("spaceDetail.colDescription"), cell: (item) => { const d = item.metadata?.description ?? ""; return <Box variant="p" fontSize="body-s">{d}</Box>; } },
               ]} />
               {semanticDetail && (
                 <div ref={semanticDetailRef}>
@@ -1463,10 +1479,11 @@ export default function SpaceDetail() {
 // ── Sub-components ─────────────────────────────────────────────────────
 
 function Breadcrumbs({ spaceId, navigate }: { spaceId: string; navigate: ReturnType<typeof useNavigate> }) {
+  const { t } = useTranslation();
   return (
     <BreadcrumbGroup items={[
-      { text: "CodeKB", href: "/" },
-      { text: "Spaces", href: "/" },
+      { text: t("common.breadcrumbRoot"), href: "/" },
+      { text: t("nav.spaces"), href: "/" },
       { text: spaceId, href: `/spaces/${spaceId}` },
     ]} onFollow={(e) => { e.preventDefault(); navigate(e.detail.href); }} />
   );
@@ -1488,9 +1505,9 @@ type TokenOp = "space_creation" | "space_overview" | "space_refresh";
 const ALL_TOKEN_OPS: TokenOp[] = ["space_creation", "space_overview", "space_refresh"];
 
 const TOKEN_OP_LABELS: Record<TokenOp, string> = {
-  space_creation: "Space creation",
-  space_overview: "Space Overview",
-  space_refresh: "Space refresh",
+  space_creation: "spaceDetail.tokenOp.space_creation",
+  space_overview: "spaceDetail.tokenOp.space_overview",
+  space_refresh: "spaceDetail.tokenOp.space_refresh",
 };
 
 /** Flatten persisted per-operation token usage into one row per event,
@@ -1500,6 +1517,7 @@ const TOKEN_OP_LABELS: Record<TokenOp, string> = {
  * row; Space Overview regenerations and (future) space refreshes contribute
  * one row each from their `recent` history. */
 function buildTokenRows(
+  t: TFunction,
   usage?: SpaceTokenUsage,
   operations: TokenOp[] = ALL_TOKEN_OPS,
 ): TokenUsageRow[] {
@@ -1513,7 +1531,7 @@ function buildTokenRows(
       rows.push({
         ...part,
         id: `creation-${i}`,
-        operation: TOKEN_OP_LABELS.space_creation,
+        operation: t(TOKEN_OP_LABELS.space_creation),
         when: creation.generated_at,
       });
     });
@@ -1532,7 +1550,7 @@ function buildTokenRows(
         rows.push({
           ...part,
           id: `${prefix}-${entry.at ?? i}-${j}`,
-          operation: TOKEN_OP_LABELS[op],
+          operation: t(TOKEN_OP_LABELS[op]),
           when: entry.at,
           detail: entry.trigger,
         });
@@ -1622,8 +1640,8 @@ function TokenConsumptionTable({
   pricingUrl,
   model,
   operations,
-  title = "Token consumption",
-  description = "Bedrock LLM token consumption per operation (inference only). Costs are not computed — use the AWS Bedrock pricing page to estimate.",
+  title,
+  description,
   variant = "embedded",
 }: {
   usage?: SpaceTokenUsage;
@@ -1634,7 +1652,8 @@ function TokenConsumptionTable({
   description?: string;
   variant?: "container" | "embedded";
 }) {
-  const rows = buildTokenRows(usage, operations);
+  const { t } = useTranslation();
+  const rows = buildTokenRows(t, usage, operations);
   if (rows.length === 0) return null;
   const regions = regionDisplay(rows, model?.region);
   const grand = lifetimeTokenTotals(usage, operations);
@@ -1643,9 +1662,9 @@ function TokenConsumptionTable({
   return (
     <ExpandableSection
       variant="container"
-      headerText={title}
+      headerText={title ?? t("spaceDetail.tokenTitle")}
       headerCounter={`(${rows.length})`}
-      headerDescription={description}
+      headerDescription={description ?? t("spaceDetail.tokenDesc")}
     >
       <SpaceBetween size="s">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 8 }}>
@@ -1653,12 +1672,12 @@ function TokenConsumptionTable({
               configured model can change between operations. */}
           {regions.header ? (
             <Box variant="small" color="text-body-secondary">
-              Region <Box variant="code" display="inline">{regions.header}</Box>
+              {t("spaceDetail.region")} <Box variant="code" display="inline">{regions.header}</Box>
             </Box>
           ) : <span />}
           {pricingUrl && (
             <Button href={pricingUrl} target="_blank" iconAlign="right" iconName="external">
-              AWS Bedrock pricing
+              {t("spaceDetail.bedrockPricing")}
             </Button>
           )}
         </div>
@@ -1668,7 +1687,7 @@ function TokenConsumptionTable({
           columnDefinitions={[
             {
               id: "operation",
-              header: "Operation",
+              header: t("spaceDetail.colOperation"),
               cell: (r) => (
                 <OperationCell
                   label={r.detail ? `${r.operation} (${r.detail})` : r.operation}
@@ -1676,10 +1695,10 @@ function TokenConsumptionTable({
                 />
               ),
             },
-            { id: "when", header: "When", cell: (r) => fmtWhen(r.when) },
+            { id: "when", header: t("spaceDetail.colWhen"), cell: (r) => fmtWhen(r.when) },
             {
               id: "model",
-              header: "Model",
+              header: t("spaceDetail.colModel"),
               cell: (r) => (
                 <ModelCell
                   models={r.models}
@@ -1688,15 +1707,15 @@ function TokenConsumptionTable({
                 />
               ),
             },
-            { id: "thinking", header: "Thinking", cell: (r) => <SettingCell value={r.thinking} noCalls={r.noCalls} /> },
-            { id: "effort", header: "Effort", cell: (r) => <SettingCell value={r.effort} noCalls={r.noCalls} /> },
-            { id: "input", header: "Input", cell: (r) => r.input.toLocaleString() },
+            { id: "thinking", header: t("spaceDetail.colThinking"), cell: (r) => <SettingCell value={r.thinking} noCalls={r.noCalls} /> },
+            { id: "effort", header: t("spaceDetail.colEffort"), cell: (r) => <SettingCell value={r.effort} noCalls={r.noCalls} /> },
+            { id: "input", header: t("spaceDetail.colInput"), cell: (r) => r.input.toLocaleString() },
             {
               id: "output",
-              header: "Output",
+              header: t("spaceDetail.colOutput"),
               cell: (r) => <OutputCell output={r.output} thinkingTokens={r.thinkingTokens} />,
             },
-            { id: "total", header: "Total", cell: (r) => r.total.toLocaleString() },
+            { id: "total", header: t("spaceDetail.colTotal"), cell: (r) => r.total.toLocaleString() },
           ]}
           footer={
             <SpaceBetween size="xxs">
@@ -1705,7 +1724,7 @@ function TokenConsumptionTable({
               </Box>
               {olderRunsHidden && (
                 <Box textAlign="right" variant="small" color="text-body-secondary">
-                  Rows show the most recent runs of each operation; the total includes all runs.
+                  {t("spaceDetail.tokenOlderRuns")}
                 </Box>
               )}
             </SpaceBetween>
@@ -1725,6 +1744,7 @@ function BusinessContextPanel({
   statistics?: Record<string, any>;
   omitLowBusinessRelevance?: boolean;
 }) {
+  const { t } = useTranslation();
   const businessTerms = context.business_terms ?? [];
   const technicalTerms = context.technical_terms ?? [];
   const businessModules = context.business_modules ?? [];
@@ -1736,12 +1756,12 @@ function BusinessContextPanel({
     <ExpandableSection
       variant="container"
       defaultExpanded={false}
-      headerText="Repository business context"
-      headerDescription={`${totalTerms} extracted item${totalTerms === 1 ? "" : "s"} · source: ${context.source ?? "unknown"}${context.confidence != null ? ` · confidence ${Math.round(context.confidence * 100)}%` : ""}`}
+      headerText={t("spaceDetail.bcHeader")}
+      headerDescription={`${t("spaceDetail.bcDesc", { count: totalTerms, source: context.source ?? t("spaceDetail.unknown") })}${context.confidence != null ? ` · ${t("spaceDetail.bcConfidence", { percent: Math.round(context.confidence * 100) })}` : ""}`}
     >
       <SpaceBetween size="m">
         {context.error && (
-          <StatusIndicator type="warning">Fallback used: {context.error}</StatusIndicator>
+          <StatusIndicator type="warning">{t("spaceDetail.fallbackUsed", { error: context.error })}</StatusIndicator>
         )}
         {tierCounts.total > 0 && (
           <BusinessRelevanceTierCounts
@@ -1750,10 +1770,10 @@ function BusinessContextPanel({
           />
         )}
         <ColumnLayout columns={2} variant="text-grid">
-          <TermGroup title="Business terms" terms={businessTerms} />
-          <TermGroup title="Technical terms" terms={technicalTerms} />
-          <TermGroup title="Business modules" terms={businessModules} />
-          <TermGroup title="Entrypoint patterns" terms={entrypointPatterns} />
+          <TermGroup title={t("spaceDetail.businessTerms")} terms={businessTerms} />
+          <TermGroup title={t("spaceDetail.technicalTerms")} terms={technicalTerms} />
+          <TermGroup title={t("spaceDetail.businessModules")} terms={businessModules} />
+          <TermGroup title={t("spaceDetail.entrypointPatterns")} terms={entrypointPatterns} />
         </ColumnLayout>
       </SpaceBetween>
     </ExpandableSection>
@@ -1767,6 +1787,7 @@ function BusinessRelevanceTierCounts({
   counts: RelevanceTierCounts;
   omitLowBusinessRelevance?: boolean;
 }) {
+  const { t } = useTranslation();
   const considered = omitLowBusinessRelevance
     ? counts.high + counts.medium + counts.heuristic
     : counts.total;
@@ -1774,14 +1795,14 @@ function BusinessRelevanceTierCounts({
   return (
     <SpaceBetween size="s">
       <Box color="text-body-secondary">
-        {considered} of {counts.total} functions/methods considered for AI indexing
-        {omitLowBusinessRelevance ? " · low relevance omitted" : ""}
+        {t("spaceDetail.tierConsidered", { considered, total: counts.total })}
+        {omitLowBusinessRelevance ? ` · ${t("spaceDetail.tierLowOmitted")}` : ""}
       </Box>
       <ColumnLayout columns={4} variant="text-grid">
-        <StatBox label="High relevance" value={counts.high} detail="Score >= 80" />
-        <StatBox label="Medium relevance" value={counts.medium} detail="Score 50-79" />
-        <StatBox label="Heuristic" value={counts.heuristic} detail="Score 25-49" />
-        <StatBox label="Low relevance" value={counts.low} detail="Score < 25" />
+        <StatBox label={t("spaceDetail.tierHigh")} value={counts.high} detail={t("spaceDetail.scoreHigh")} />
+        <StatBox label={t("spaceDetail.tierMedium")} value={counts.medium} detail={t("spaceDetail.scoreMedium")} />
+        <StatBox label={t("spaceDetail.tierHeuristic")} value={counts.heuristic} detail={t("spaceDetail.scoreHeuristic")} />
+        <StatBox label={t("spaceDetail.tierLow")} value={counts.low} detail={t("spaceDetail.scoreLow")} />
       </ColumnLayout>
     </SpaceBetween>
   );
@@ -1813,6 +1834,7 @@ function numericCount(value: unknown): number {
 }
 
 function TermGroup({ title, terms }: { title: string; terms: string[] }) {
+  const { t } = useTranslation();
   return (
     <div>
       <Box variant="awsui-key-label">{title}</Box>
@@ -1821,7 +1843,7 @@ function TermGroup({ title, terms }: { title: string; terms: string[] }) {
           {terms.map((term) => <Badge key={term}>{term}</Badge>)}
         </div>
       ) : (
-        <Box color="text-body-secondary">No terms extracted</Box>
+        <Box color="text-body-secondary">{t("spaceDetail.noTerms")}</Box>
       )}
     </div>
   );
@@ -1845,6 +1867,7 @@ function BusinessRelevanceSummary({ behavior }: { behavior?: Record<string, any>
 }
 
 function BusinessRelevanceDetails({ behavior }: { behavior?: Record<string, any> | null }) {
+  const { t } = useTranslation();
   const score = relevanceScore(behavior);
   const tier = relevanceTier(behavior);
   const reasons = relevanceReasons(behavior);
@@ -1852,29 +1875,29 @@ function BusinessRelevanceDetails({ behavior }: { behavior?: Record<string, any>
 
   return (
     <ExpandableSection
-      headerText="Business relevance"
-      headerDescription={`${score != null ? `Score ${score.toFixed(1)}` : "No score"}${tier ? ` · ${tier}` : ""}`}
+      headerText={t("spaceDetail.businessRelevance")}
+      headerDescription={`${score != null ? t("spaceDetail.scoreValue", { score: score.toFixed(1) }) : t("spaceDetail.noScore")}${tier ? ` · ${tier}` : ""}`}
       defaultExpanded
     >
       <SpaceBetween size="m">
         <ColumnLayout columns={2}>
           <div>
-            <Box variant="awsui-key-label">Score</Box>
+            <Box variant="awsui-key-label">{t("spaceDetail.score")}</Box>
             <Box variant="h2">{score != null ? score.toFixed(1) : "—"}</Box>
           </div>
           <div>
-            <Box variant="awsui-key-label">Tier</Box>
+            <Box variant="awsui-key-label">{t("spaceDetail.tier")}</Box>
             {tier ? <Badge color={tierBadgeColor(tier)}>{tier}</Badge> : <Box color="text-body-secondary">—</Box>}
           </div>
         </ColumnLayout>
         <div>
-          <Box variant="awsui-key-label">Reasons</Box>
+          <Box variant="awsui-key-label">{t("spaceDetail.reasons")}</Box>
           {reasons.length > 0 ? (
             <SpaceBetween size="xxs">
               {reasons.map((reason) => <Box key={reason} fontSize="body-s">{reason}</Box>)}
             </SpaceBetween>
           ) : (
-            <Box color="text-body-secondary">No reasons recorded</Box>
+            <Box color="text-body-secondary">{t("spaceDetail.noReasons")}</Box>
           )}
         </div>
 
@@ -1884,6 +1907,7 @@ function BusinessRelevanceDetails({ behavior }: { behavior?: Record<string, any>
 }
 
 function SourceCodeViewer({ component }: { component: Record<string, any> }) {
+  const { t } = useTranslation();
   const source = String(component.source_code ?? "");
   const startLine = Number(component.line_number ?? 1);
   const lineCount = source ? source.split("\n").length : 0;
@@ -1892,14 +1916,14 @@ function SourceCodeViewer({ component }: { component: Record<string, any> }) {
 
   return (
     <ExpandableSection
-      headerText="View code"
+      headerText={t("spaceDetail.viewCode")}
       headerDescription={`${component.file_path ?? "source"}:${component.line_number ?? "?"}-${component.end_line_number ?? "?"}`}
       defaultExpanded={false}
     >
       <div className="source-viewer">
         <div className="source-viewer__toolbar">
           <Box variant="code" fontSize="body-s">{language ?? component.language ?? "text"}</Box>
-          <CopyButton text={source} variant="inline-icon" label="Copy code" />
+          <CopyButton text={source} variant="inline-icon" label={t("spaceDetail.copyCode")} />
         </div>
         <div className="source-viewer__body">
           <pre className="source-viewer__gutter" aria-hidden="true">
@@ -1964,29 +1988,6 @@ const DOC_ICONS: Record<string, string> = {
 
 // ── Pipeline step helpers ───────────────────────────────────────────
 
-const STEP_LABELS: Record<string, string> = {
-  clone: "Clone repository",
-  extract: "Extract upload",
-  analyze: "Parse & build call graphs",
-  business_context: "Extract business context",
-  summarize: "Deep Semantic Analysis",
-  save: "Save knowledge base",
-  // Refresh pipeline steps
-  unchanged: "No new commits, nothing to update",
-  remediate_depth: "Prepare git history",
-  refresh_diff: "Compute file diff",
-  parse_changed: "Parse changed files",
-  merge: "Merge components",
-  rebuild_call_graph: "Rebuild call graph",
-  summarize_changed: "Summarize changed components",
-  stage_kb: "Stage knowledge base",
-  vector_upserts: "Update vectors (upsert)",
-  vector_deletes: "Update vectors (delete)",
-  commit_kb: "Commit knowledge base",
-  invalidate_caches: "Invalidate caches",
-  mark_overviews_stale: "Mark overviews stale",
-};
-
 const PIPELINE_STEP_ORDER = ["clone", "extract", "analyze", "business_context", "summarize", "save"];
 // vector_upserts only appears in older runs' history.
 const REFRESH_STEP_ORDER = [
@@ -1995,12 +1996,12 @@ const REFRESH_STEP_ORDER = [
   "stage_kb", "commit_kb", "invalidate_caches", "mark_overviews_stale",
 ];
 
-const pipelineColumnDefs = [
+const getPipelineColumnDefs = (t: TFunction) => [
   {
     id: "step",
-    header: "Step",
+    header: t("spaceDetail.colStep"),
     cell: (item: { step: string; status: string }) => {
-      const label = STEP_LABELS[item.step] ?? item.step;
+      const label = t(`spaceDetail.step.${item.step}`, { defaultValue: item.step });
       if (item.status === "completed") return <StatusIndicator type="success">{label}</StatusIndicator>;
       if (item.status === "failed") return <StatusIndicator type="error">{label}</StatusIndicator>;
       if (item.status === "in_progress") return <SpaceBetween direction="horizontal" size="xs"><Spinner size="normal" /><span>{label}</span></SpaceBetween>;
@@ -2009,12 +2010,12 @@ const pipelineColumnDefs = [
   },
   {
     id: "started",
-    header: "Started",
+    header: t("spaceDetail.colStarted"),
     cell: (item: { started_at?: string }) => item.started_at ? formatTimestamp(item.started_at) : "—",
   },
   {
     id: "duration",
-    header: "Duration",
+    header: t("spaceDetail.duration"),
     cell: (item: { started_at?: string; status: string; updated_at?: string }) =>
       formatDuration(item.started_at, item.status === "in_progress" ? undefined : item.updated_at),
   },
@@ -2079,12 +2080,15 @@ function ComponentDetail({ component, flowData, depsData, loading, flowLoading, 
   loading: boolean; flowLoading: boolean; depsLoading: boolean; onTraceFlow: () => void; onShowDeps: () => void;
   showBusinessRelevance?: boolean;
 }) {
+  const { t } = useTranslation();
   // Trace flow / dependency analysis only make sense for callable components.
   // For variables, constants, enums, etc. the backend returns an error, so
   // disable the buttons and explain why on hover.
   const CALLABLE_TYPES = ["function", "method", "constructor"];
   const isCallable = CALLABLE_TYPES.includes(String(component.type ?? "").toLowerCase());
-  const nonCallableReason = `Not available for ${component.type ?? "this"} components — only functions, methods, and constructors can be traced.`;
+  const nonCallableReason = component.type
+    ? t("spaceDetail.nonCallable", { type: component.type })
+    : t("spaceDetail.nonCallableGeneric");
   const directDependencies = uniqueStrings(depsData?.direct_dependencies);
   const dependents = uniqueStrings(depsData?.dependents);
   // UI-only labels keyed by component id. The backend attaches display_name
@@ -2102,7 +2106,7 @@ function ComponentDetail({ component, flowData, depsData, loading, flowLoading, 
           disabledReason={!isCallable ? nonCallableReason : undefined}
           onClick={onTraceFlow}
         >
-          Trace flow
+          {t("spaceDetail.traceFlow")}
         </Button>
         <Button
           loading={depsLoading}
@@ -2110,51 +2114,51 @@ function ComponentDetail({ component, flowData, depsData, loading, flowLoading, 
           disabledReason={!isCallable ? nonCallableReason : undefined}
           onClick={onShowDeps}
         >
-          Show dependencies
+          {t("spaceDetail.showDependencies")}
         </Button>
       </SpaceBetween>}>{component.display_name ?? component.name}</Header>}>
       <SpaceBetween size="l">
         <ColumnLayout columns={3}>
-          <div><Box variant="awsui-key-label">Type</Box><div>{component.type}</div></div>
-          <div><Box variant="awsui-key-label">Language</Box><div>{component.language}</div></div>
-          <div><Box variant="awsui-key-label">Location</Box><Box variant="code">{component.file_path}:{component.line_number}</Box></div>
+          <div><Box variant="awsui-key-label">{t("spaceDetail.colType")}</Box><div>{component.type}</div></div>
+          <div><Box variant="awsui-key-label">{t("spaceDetail.colLanguage")}</Box><div>{component.language}</div></div>
+          <div><Box variant="awsui-key-label">{t("spaceDetail.location")}</Box><Box variant="code">{component.file_path}:{component.line_number}</Box></div>
         </ColumnLayout>
         <BusinessRelevanceDetails behavior={showBusinessRelevance ? component.business_behavior : undefined} />
-        {component.attributes?.documentation && <div><Box variant="awsui-key-label">Documentation</Box><Box variant="p">{component.attributes.documentation}</Box></div>}
-        {component.business_behavior?.description && <div><Box variant="awsui-key-label">Business description</Box><Box variant="p">{component.business_behavior.description}</Box></div>}
+        {component.attributes?.documentation && <div><Box variant="awsui-key-label">{t("spaceDetail.documentation")}</Box><Box variant="p">{component.attributes.documentation}</Box></div>}
+        {component.business_behavior?.description && <div><Box variant="awsui-key-label">{t("spaceDetail.businessDescription")}</Box><Box variant="p">{component.business_behavior.description}</Box></div>}
         {component.source_code && (
           <SourceCodeViewer component={component} />
         )}
         {flowData && (
-          <ExpandableSection headerText={`Execution flow (${flowData.flow_steps?.length ?? 0} steps)`} defaultExpanded>
+          <ExpandableSection headerText={t("spaceDetail.executionFlow", { count: flowData.flow_steps?.length ?? 0 })} defaultExpanded>
             <div style={{ maxHeight: "400px", overflow: "auto", background: "#0f1b2a", borderRadius: "8px", padding: "16px" }}>
               <pre style={{ margin: 0, color: "#d1d5db", fontSize: "13px", fontFamily: "'Amazon Ember Mono', monospace" }}>
-                {flowData.flow_steps?.map((s: any, i: number) => `${"  ".repeat(s.depth ?? 0)}${i + 1}. ${flowDisplayNames[s.caller] ?? s.caller} → ${flowDisplayNames[s.component] ?? s.component}`).join("\n") || "No flow steps"}
+                {flowData.flow_steps?.map((s: any, i: number) => `${"  ".repeat(s.depth ?? 0)}${i + 1}. ${flowDisplayNames[s.caller] ?? s.caller} → ${flowDisplayNames[s.component] ?? s.component}`).join("\n") || t("spaceDetail.noFlowSteps")}
               </pre>
             </div>
           </ExpandableSection>
         )}
         {depsData && (
-          <ExpandableSection headerText="Dependencies" defaultExpanded>
+          <ExpandableSection headerText={t("spaceDetail.dependencies")} defaultExpanded>
             <ColumnLayout columns={2}>
               <div>
-                <Box variant="awsui-key-label">Direct dependencies ({directDependencies.length})</Box>
+                <Box variant="awsui-key-label">{t("spaceDetail.directDependencies", { count: directDependencies.length })}</Box>
                 <SpaceBetween size="xxs">
                   {directDependencies.map((d: string) => <Box key={d} variant="code" fontSize="body-s">{depsDisplayNames[d] ?? d}</Box>)}
-                  {directDependencies.length === 0 && <Box color="text-body-secondary">None</Box>}
+                  {directDependencies.length === 0 && <Box color="text-body-secondary">{t("spaceDetail.none")}</Box>}
                 </SpaceBetween>
               </div>
               <div>
-                <Box variant="awsui-key-label">Dependents ({dependents.length})</Box>
+                <Box variant="awsui-key-label">{t("spaceDetail.dependents", { count: dependents.length })}</Box>
                 <SpaceBetween size="xxs">
                   {dependents.map((d: string) => <Box key={d} variant="code" fontSize="body-s">{depsDisplayNames[d] ?? d}</Box>)}
-                  {dependents.length === 0 && <Box color="text-body-secondary">None</Box>}
+                  {dependents.length === 0 && <Box color="text-body-secondary">{t("spaceDetail.none")}</Box>}
                 </SpaceBetween>
               </div>
             </ColumnLayout>
             <Box padding={{ top: "s" }}>
               <StatusIndicator type={depsData.coupling_strength === "high" ? "error" : depsData.coupling_strength === "medium" ? "warning" : "success"}>
-                Coupling: {depsData.coupling_strength ?? "unknown"}
+                {t("spaceDetail.coupling", { value: depsData.coupling_strength ?? t("spaceDetail.unknown") })}
               </StatusIndicator>
             </Box>
           </ExpandableSection>
