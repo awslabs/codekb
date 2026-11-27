@@ -301,6 +301,7 @@ class CSharpParser(BaseLanguageParser):
                 is_abstract=self._has_modifier(node, "abstract"),
                 # In C#, `sealed` is the closest analogue to Java's `final` for methods/classes.
                 is_final=self._has_modifier(node, "sealed"),
+                is_extension=self._is_extension_method(node),
             )
 
             if node.type == "constructor_declaration":
@@ -695,6 +696,19 @@ class CSharpParser(BaseLanguageParser):
             elif child.type.lower() == target:
                 return True
         return False
+
+    def _is_extension_method(self, node: Any) -> bool:
+        """True for a C# extension method: a `this` modifier on the first parameter.
+
+        The call graph uses this to let an instance-style call
+        (`value.Slugify()`) resolve to the static extension method by its bare
+        name, which plain receiver-name matching intentionally does not do.
+        """
+        param_list = next((c for c in node.children if c.type == "parameter_list"), None)
+        if param_list is None:
+            return False
+        first_param = next((c for c in param_list.children if c.type == "parameter"), None)
+        return first_param is not None and self._has_modifier(first_param, "this")
 
     def _extract_signature(self, node: Any, source_lines: List[str]) -> str:
         """Extract method/class signature (first line, capped at 200 chars)."""

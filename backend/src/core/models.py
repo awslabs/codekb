@@ -308,6 +308,9 @@ class ComponentAttributes:
         accessor_kind: "get" or "set" when the identity carries that kind suffix,
             else None. Recorded because the suffix is indistinguishable from a
             member literally named `get`/`set`, which Dart permits
+        is_extension: Whether the method is an extension method (C# `this` on the
+            first parameter). Lets the call graph resolve an instance-style call
+            `receiver.Method()` to the extension method by its bare name.
     """
 
     signature: Optional[str] = None
@@ -322,6 +325,7 @@ class ComponentAttributes:
     is_abstract: bool = False
     is_final: bool = False
     accessor_kind: Optional[str] = None
+    is_extension: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert attributes to dictionary representation."""
@@ -342,6 +346,10 @@ class ComponentAttributes:
         # serializes exactly as it did before this field existed.
         if self.accessor_kind is not None:
             data["accessor_kind"] = self.accessor_kind
+        # Additive and opt-in: only extension methods carry this, so every other
+        # component serializes exactly as it did before this field existed.
+        if self.is_extension:
+            data["is_extension"] = True
         return data
 
     @classmethod
@@ -360,6 +368,7 @@ class ComponentAttributes:
             is_abstract=data.get("is_abstract", False),
             is_final=data.get("is_final", False),
             accessor_kind=data.get("accessor_kind"),
+            is_extension=data.get("is_extension", False),
         )
 
 
