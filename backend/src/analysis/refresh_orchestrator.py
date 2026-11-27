@@ -22,6 +22,7 @@ from ..core.token_usage import operation_usage, workload_record
 from ..core.file_utils import LEGACY_DEFAULT_EXCLUDE_PATTERNS, FileScanner, discard_directory
 from ..core.logging_utils import get_logger
 from ..core.models import (
+    EDGE_KIND_ANNOTATION,
     ChangeType,
     Component,
     FileChange,
@@ -30,6 +31,8 @@ from ..core.models import (
     ParseFailureReport,
     RefreshPlan,
     RefreshResult,
+    call_edge_kind,
+    call_edge_target,
     resolve_id_scheme,
 )
 from .errors import GitCommandError, RefreshFailed
@@ -2575,15 +2578,33 @@ class RefreshOrchestrator:
     def _widen_stale_callers(
         self, prior_call_graph: dict[str, Any], new_call_graph: dict[str, Any]
     ) -> None:
-        """Re-plan stale callers over the prior and rebuilt call graphs together."""
+        """Re-plan stale callers over the prior and rebuilt call graphs together.
+
+        Besides new or retargeted call edges, this catches implicit
+        annotation-handler edges appearing or disappearing: adding or removing a
+        class-level annotation, editing a named ``@Pointcut`` or an aspect's
+        binding changes which handlers advise a method WITHOUT changing the
+        method's own source hash, so the hash-based seed misses it. A method
+        whose annotation-edge targets differ between the prior and rebuilt
+        graphs is re-summarized (its prompt gains or loses the handler) and
+        seeds the caller closure like any changed callable, since its callers'
+        prompts included the handler transitively.
+        """
         plan = self._refresh_plan
         assert plan is not None, "merge step must produce a RefreshPlan"
         reverse = self._build_reverse_call_graph(prior_call_graph)
         for callee, callers in self._build_reverse_call_graph(new_call_graph).items():
             reverse.setdefault(callee, []).extend(callers)
-        seed = plan.changed_component_ids | self._removed_callables
+        annotation_edges_changed = self._annotation_edge_changes(
+            prior_call_graph, new_call_graph
+        )
+        seed = plan.changed_component_ids | self._removed_callables | annotation_edges_changed
         stale = frozenset(
-            self._reachable_within(reverse, seed, self._prompt_hops()) & self._stale_candidates
+            (
+                self._reachable_within(reverse, seed, self._prompt_hops())
+                | annotation_edges_changed
+            )
+            & self._stale_candidates
         )
         added = stale - plan.stale_caller_ids
         if not added:
@@ -2593,7 +2614,42 @@ class RefreshOrchestrator:
         )
         logger.info(
             "refresh.caller_closure.widened",
-            extra={"space_id": self.space_id, "added_stale_callers": len(added)},
+            extra={
+                "space_id": self.space_id,
+                "added_stale_callers": len(added),
+                "annotation_edges_changed": len(annotation_edges_changed),
+            },
+        )
+
+    @staticmethod
+    def _annotation_edge_changes(
+        prior_call_graph: dict[str, Any], new_call_graph: dict[str, Any]
+    ) -> frozenset[str]:
+        """Methods whose implicit annotation-handler target set changed.
+
+        Compares only EDGE_KIND_ANNOTATION edges, so ordinary call-edge churn
+        never lands here. A knowledge base persisted before these edges existed
+        has none, so the first refresh after upgrade reports every advised
+        method — a one-time re-summarization that adds the previously missing
+        handler context to their descriptions.
+        """
+
+        def annotation_targets(call_graph: dict[str, Any]) -> dict[str, frozenset[str]]:
+            result: dict[str, frozenset[str]] = {}
+            for caller, calls in call_graph.items():
+                targets = frozenset(
+                    call_edge_target(edge)
+                    for edge in calls or []
+                    if call_edge_kind(edge) == EDGE_KIND_ANNOTATION
+                )
+                if targets:
+                    result[caller] = targets
+            return result
+
+        prior = annotation_targets(prior_call_graph)
+        new = annotation_targets(new_call_graph)
+        return frozenset(
+            caller for caller in prior.keys() | new.keys() if prior.get(caller) != new.get(caller)
         )
 
     def _reachable_within(

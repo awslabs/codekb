@@ -172,6 +172,7 @@ class JavaParser(BaseLanguageParser):
                 signature=self._extract_signature(node, source_lines),
                 parameters=parameters,
                 visibility=visibility,
+                decorators=self._extract_annotation_names(node),
                 line_count=node.end_point[0] - node.start_point[0] + 1,
                 is_static=self._has_modifier(node, "static"),
                 is_abstract=self._has_modifier(node, "abstract"),
@@ -208,6 +209,7 @@ class JavaParser(BaseLanguageParser):
             attributes = ComponentAttributes(
                 signature=self._extract_signature(node, source_lines),
                 visibility=visibility,
+                decorators=self._extract_annotation_names(node),
                 line_count=node.end_point[0] - node.start_point[0] + 1,
                 is_static=self._has_modifier(node, "static"),
                 is_abstract=self._has_modifier(node, "abstract"),
@@ -271,6 +273,30 @@ class JavaParser(BaseLanguageParser):
                 elif "private" in text:
                     return Visibility.PRIVATE
         return Visibility.PACKAGE
+
+    def _extract_annotation_names(self, node: Any) -> List[str]:
+        """Record the annotations on a declaration into the decorators field.
+
+        Returns the annotation names as written (``@PolicyCheck``,
+        ``@com.example.PolicyCheck``), in source order, without arguments —
+        argument values can span many lines and carry no identity. Resolution
+        to the annotation's ``@interface`` happens in the Spring annotation
+        resolver, which needs the AST anyway (pointcut strings, parameter
+        types); this field records the usage for the model and the stored KB.
+        """
+        names: List[str] = []
+        try:
+            for child in node.children:
+                if child.type != "modifiers":
+                    continue
+                for mod_child in child.children:
+                    if mod_child.type in ("marker_annotation", "annotation"):
+                        name_node = mod_child.child_by_field_name("name")
+                        if name_node is not None:
+                            names.append(f"@{self._get_node_text_simple(name_node)}")
+        except Exception:
+            pass
+        return names
 
     def _has_modifier(self, node: Any, modifier: str) -> bool:
         """Check if node has specific modifier."""

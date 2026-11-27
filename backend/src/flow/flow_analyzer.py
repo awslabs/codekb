@@ -18,6 +18,9 @@ from ..core.models import (
     DependencyAnalysis,
     CallType,
     CouplingStrength,
+    EDGE_KIND_ANNOTATION,
+    call_edge_kind,
+    call_edge_target,
 )
 from ..core.logging_utils import get_logger, ErrorContext
 from ..core.tree_sitter_wrapper import TreeSitterWrapper, tree_cache_key
@@ -179,9 +182,16 @@ class FlowAnalyzer(IFlowAnalyzer):
                         file_components, component_lookup, components
                     )
 
+            # Third pass: implicit annotation-handler edges. Appended after the
+            # re-process pass, which REPLACES each component's call list, and
+            # before the reverse graph is derived so staleness/dependents see
+            # them too.
+            self._add_annotation_handler_edges(components)
+
             # Build reverse call graph
             for comp_id, calls_with_lines in self._call_graph.items():
-                for called_component, _ in calls_with_lines:
+                for edge in calls_with_lines:
+                    called_component = call_edge_target(edge)
                     if called_component not in self._reverse_call_graph:
                         self._reverse_call_graph[called_component] = []
                     self._reverse_call_graph[called_component].append(comp_id)
@@ -262,15 +272,40 @@ class FlowAnalyzer(IFlowAnalyzer):
             # Get direct dependencies. A component may call the same callee
             # multiple times at different lines; dependency analysis should
             # report unique relationships rather than every call site.
+            # Implicit annotation edges are split out into advised_by so they
+            # are never presented as direct calls.
+            edges = self._call_graph.get(component, [])
             direct_deps = self._unique_preserve_order(
-                call[0] for call in self._call_graph.get(component, [])
+                call_edge_target(edge)
+                for edge in edges
+                if call_edge_kind(edge) != EDGE_KIND_ANNOTATION
+            )
+            advised_by = self._unique_preserve_order(
+                call_edge_target(edge)
+                for edge in edges
+                if call_edge_kind(edge) == EDGE_KIND_ANNOTATION
             )
 
             # Calculate transitive dependencies
             transitive_deps = self._get_transitive_dependencies(component)
 
-            # Get dependents (reverse dependencies)
-            dependents = self._unique_preserve_order(self._reverse_call_graph.get(component, []))
+            # Get dependents (reverse dependencies), with implicitly advised
+            # callers split out symmetrically into advises.
+            all_callers = self._unique_preserve_order(
+                self._reverse_call_graph.get(component, [])
+            )
+            dependents = [
+                caller for caller in all_callers if not self._only_advised_by(caller, component)
+            ]
+            advises = [
+                caller
+                for caller in all_callers
+                if any(
+                    call_edge_target(edge) == component
+                    and call_edge_kind(edge) == EDGE_KIND_ANNOTATION
+                    for edge in self._call_graph.get(caller, [])
+                )
+            ]
 
             # Detect circular dependencies
             circular_deps = self._find_circular_dependencies_for_component(component)
@@ -289,12 +324,25 @@ class FlowAnalyzer(IFlowAnalyzer):
                 circular_dependencies=circular_deps,
                 coupling_strength=coupling,
                 dependents=dependents,
+                advised_by=advised_by,
+                advises=advises,
             )
 
             logger.debug(
                 f"Dependency analysis for {component}: {len(direct_deps)} direct, {len(transitive_deps)} transitive"
             )
             return analysis
+
+    def _only_advised_by(self, caller: str, component: str) -> bool:
+        """True when every edge from caller to component is an implicit annotation edge."""
+        found_edge = False
+        for edge in self._call_graph.get(caller, []):
+            if call_edge_target(edge) != component:
+                continue
+            if call_edge_kind(edge) != EDGE_KIND_ANNOTATION:
+                return False
+            found_edge = True
+        return found_edge
 
     @staticmethod
     def _unique_preserve_order(values) -> List[str]:
@@ -311,6 +359,11 @@ class FlowAnalyzer(IFlowAnalyzer):
     def find_dependency_path(self, from_component: str, to_component: str) -> Optional[List[str]]:
         """
         Find dependency path between components.
+
+        Implicit annotation edges are not followed: the returned path is an
+        unlabeled chain of calls, so a hop that only exists because a handler
+        advises a method must never appear in it. A path that would require
+        such a hop is reported as no path.
 
         Args:
             from_component: Starting component
@@ -336,7 +389,10 @@ class FlowAnalyzer(IFlowAnalyzer):
             if current == to_component:
                 return path
 
-            for neighbor, _ in self._call_graph.get(current, []):
+            for edge in self._call_graph.get(current, []):
+                if call_edge_kind(edge) == EDGE_KIND_ANNOTATION:
+                    continue
+                neighbor = call_edge_target(edge)
                 if neighbor not in visited:
                     visited.add(neighbor)
                     queue.append((neighbor, path + [neighbor]))
@@ -363,7 +419,8 @@ class FlowAnalyzer(IFlowAnalyzer):
             rec_stack.add(node)
             path.append(node)
 
-            for neighbor, _ in self._call_graph.get(node, []):
+            for edge in self._call_graph.get(node, []):
+                neighbor = call_edge_target(edge)
                 if neighbor in rec_stack:
                     # Found cycle
                     cycle_start = path.index(neighbor)
@@ -561,6 +618,39 @@ class FlowAnalyzer(IFlowAnalyzer):
                         unique_calls.append((call, line))
 
                 self._call_graph[component.id] = unique_calls
+
+    def _add_annotation_handler_edges(self, components: List[Component]) -> None:
+        """Append implicit annotation-handler edges to the call graph.
+
+        The per-language adapters in ``flow.annotation_edges`` link a method
+        carrying an annotation to the in-repo handler the framework runs for
+        it. Each link becomes a regular call-graph entry with a third element,
+        ``(handler_id, line, EDGE_KIND_ANNOTATION)``, so call depth
+        (``get_call_depths``), summarization prompts, refresh staleness and
+        the reverse graph pick it up without special cases.
+
+        Output policy: an implicit edge never appears in an UNLABELED
+        dependency output. It is excluded from ``direct_dependencies`` /
+        ``dependents``, ``transitive_dependencies``, ``dependency_depth``,
+        per-component ``circular_dependencies``, trace-flow ``circular_calls``
+        and ``find_dependency_path``. It surfaces only where it is labeled:
+        ``advised_by`` / ``advises``, ``CallType.ANNOTATION`` trace steps, and
+        the ``edge_kind`` marker on nodes of ``build_call_graph_with_source``.
+        """
+        from .annotation_edges import resolve_annotation_edges
+
+        edges_by_source = resolve_annotation_edges(components, self._get_cached_syntax_tree)
+        added = 0
+        for source_id, edges in edges_by_source.items():
+            existing = self._call_graph.get(source_id)
+            if existing is None:
+                continue
+            for edge in edges:
+                if edge[0] in self._call_graph:
+                    existing.append(edge)
+                    added += 1
+        if added:
+            logger.info(f"Added {added} implicit annotation-handler edge(s) to the call graph")
 
     def _build_scoped_lookup(
         self, component_lookup: Dict[str, str], components: List[Component]
@@ -1171,9 +1261,15 @@ class FlowAnalyzer(IFlowAnalyzer):
             return
 
         if component in call_stack:
-            # Circular call detected
-            if component not in flow.circular_calls:
-                flow.circular_calls.append(component)
+            # Circular call detected. ``circular_calls`` is rendered as an
+            # unlabeled "Circular calls" list, so a cycle that exists only
+            # through an implicit annotation edge (an advice calling back into
+            # a method it advises) is dropped; the traversal still stops here
+            # either way, so tracing stays bounded.
+            cycle = call_stack[call_stack.index(component) :] + [component]
+            if not self._cycle_requires_annotation_edge(cycle):
+                if component not in flow.circular_calls:
+                    flow.circular_calls.append(component)
             return
 
         call_stack.append(component)
@@ -1181,12 +1277,15 @@ class FlowAnalyzer(IFlowAnalyzer):
         # Get calls sorted by line number
         calls_with_lines = self._call_graph.get(component, [])
 
-        for called_component, line_number in calls_with_lines:
+        for edge in calls_with_lines:
+            called_component = call_edge_target(edge)
+            line_number = edge[1] if isinstance(edge, (tuple, list)) and len(edge) > 1 else None
+            is_annotation_edge = call_edge_kind(edge) == EDGE_KIND_ANNOTATION
             step = FlowStep(
                 sequence_number=len(flow.flow_steps) + 1,
                 component=called_component,
                 caller=component,
-                call_type=CallType.DIRECT,
+                call_type=CallType.ANNOTATION if is_annotation_edge else CallType.DIRECT,
                 file_location=f"{component}:{line_number}",
                 line_number=line_number,
             )
@@ -1202,7 +1301,14 @@ class FlowAnalyzer(IFlowAnalyzer):
         call_stack.pop()
 
     def _get_transitive_dependencies(self, component: str) -> List[str]:
-        """Get all transitive dependencies for a component."""
+        """Get all transitive dependencies for a component.
+
+        Implicit annotation edges are not followed: a handler is reported via
+        ``advised_by``, so neither it nor its callees are presented as plain
+        transitive dependencies. (One instance of the policy spelled out in
+        ``_add_annotation_handler_edges``: no unlabeled dependency output ever
+        contains an implicit edge.)
+        """
         transitive = set()
         visited = set()
 
@@ -1211,31 +1317,64 @@ class FlowAnalyzer(IFlowAnalyzer):
                 return
             visited.add(node)
 
-            for dep, _ in self._call_graph.get(node, []):
+            for edge in self._call_graph.get(node, []):
+                if call_edge_kind(edge) == EDGE_KIND_ANNOTATION:
+                    continue
+                dep = call_edge_target(edge)
                 if dep != component:  # Avoid self-reference
                     transitive.add(dep)
                     dfs(dep)
 
-        for direct_dep, _ in self._call_graph.get(component, []):
-            dfs(direct_dep)
+        for direct_edge in self._call_graph.get(component, []):
+            if call_edge_kind(direct_edge) == EDGE_KIND_ANNOTATION:
+                continue
+            dfs(call_edge_target(direct_edge))
 
-        # Remove direct dependencies from transitive list
-        direct_deps = set(call[0] for call in self._call_graph.get(component, []))
+        # Remove direct PLAIN dependencies from the transitive list. Annotation
+        # edges stay out of the subtraction set: they are never reported as
+        # direct dependencies, so a handler that is ALSO genuinely reachable
+        # through a plain call chain (A -> B -> H with an annotation edge
+        # A -> H) must remain a transitive dependency.
+        direct_deps = {
+            call_edge_target(call)
+            for call in self._call_graph.get(component, [])
+            if call_edge_kind(call) != EDGE_KIND_ANNOTATION
+        }
         return list(transitive - direct_deps)
 
     def _find_circular_dependencies_for_component(self, component: str) -> List[str]:
-        """Find circular dependencies involving a specific component."""
+        """Find circular dependencies involving a specific component.
+
+        A cycle that exists only through an implicit annotation edge (an
+        advice calling back into a method it advises) is excluded here and in
+        trace-flow ``circular_calls``: implicit edges are surfaced via
+        ``advised_by``/``advises``, never presented as an ordinary dependency
+        cycle. The raw ``detect_circular_dependencies()`` still returns such
+        cycles so traversals stay bounded.
+        """
         all_cycles = self.detect_circular_dependencies()
         component_cycles = []
 
         for cycle in all_cycles:
-            if component in cycle:
+            if component in cycle and not self._cycle_requires_annotation_edge(cycle):
                 component_cycles.extend(cycle)
 
         return list(set(component_cycles))
 
+    def _cycle_requires_annotation_edge(self, cycle: List[str]) -> bool:
+        """True when some hop of the cycle exists only as an annotation edge."""
+        return any(
+            self._only_advised_by(cycle[i], cycle[i + 1]) for i in range(len(cycle) - 1)
+        )
+
     def _calculate_dependency_depth(self, component: str) -> int:
-        """Calculate maximum dependency depth for a component."""
+        """Calculate maximum dependency depth for a component.
+
+        Implicit annotation edges are not followed: ``dependency_depth`` is an
+        unlabeled count of plain call hops, so a method with no real calls has
+        depth 0 even when a handler advises it (the handler shows up in
+        ``advised_by`` instead).
+        """
         visited = set()
 
         def dfs(node: str, depth: int) -> int:
@@ -1244,8 +1383,10 @@ class FlowAnalyzer(IFlowAnalyzer):
             visited.add(node)
 
             node_max_depth = depth
-            for dep, _ in self._call_graph.get(node, []):
-                dep_depth = dfs(dep, depth + 1)
+            for edge in self._call_graph.get(node, []):
+                if call_edge_kind(edge) == EDGE_KIND_ANNOTATION:
+                    continue
+                dep_depth = dfs(call_edge_target(edge), depth + 1)
                 node_max_depth = max(node_max_depth, dep_depth)
 
             return node_max_depth
@@ -2058,9 +2199,38 @@ class FlowAnalyzer(IFlowAnalyzer):
         Returns:
             Dictionary containing call graph with source code, or None if not found
         """
-        return self._build_call_graph_with_source_recursive(
-            component_id, max_depth, set(), source_root
+        rendered: Dict[str, Dict[str, Any]] = {}
+        annotation_targets: Set[str] = set()
+        direct_call_targets: Set[str] = set()
+        root = self._build_call_graph_with_source_recursive(
+            component_id, max_depth, set(), source_root, rendered, annotation_targets,
+            direct_call_targets,
         )
+        # Each node is expanded once (shared visited set), so which parent
+        # renders it depends on traversal order. ``edge_kind`` always reflects
+        # the edge that actually rendered the node. A node rendered under a
+        # direct call — its parent visibly calls it — that is ALSO the target
+        # of an annotation edge elsewhere in the graph gets the non-exclusive
+        # ``also_annotation_handler`` note instead, so the dual role is shown
+        # without denying the direct call. Mirror direction: a node rendered
+        # under an annotation edge that some expanded node ALSO calls directly
+        # gets the non-exclusive ``also_called_directly`` note, so "not a
+        # direct call" (true of the rendering edge) never reads as "never
+        # called directly". The root is never marked: all markers describe the
+        # node's relation to a caller above it.
+        for target in annotation_targets:
+            node = rendered.get(target)
+            if node is None or target == component_id:
+                continue
+            if node.get("edge_kind") != EDGE_KIND_ANNOTATION:
+                node["also_annotation_handler"] = True
+        for target in direct_call_targets:
+            node = rendered.get(target)
+            if node is None or target == component_id:
+                continue
+            if node.get("edge_kind") == EDGE_KIND_ANNOTATION:
+                node["also_called_directly"] = True
+        return root
 
     def _build_call_graph_with_source_recursive(
         self,
@@ -2068,8 +2238,23 @@ class FlowAnalyzer(IFlowAnalyzer):
         max_depth: int,
         visited: Set[str],
         source_root: Optional[Path] = None,
+        rendered: Optional[Dict[str, Dict[str, Any]]] = None,
+        annotation_targets: Optional[Set[str]] = None,
+        direct_call_targets: Optional[Set[str]] = None,
+        edge_kind: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Recursively build call graph with source code."""
+        """Recursively build call graph with source code.
+
+        ``edge_kind`` is the kind of the edge that renders this node (None for
+        the root and for plain call edges); it becomes the node's ``edge_kind``
+        when it is an annotation edge, so the marker always describes the edge
+        the node is actually rendered under. ``rendered`` collects each
+        expanded node by id, ``annotation_targets`` the targets of annotation
+        edges leaving expanded nodes, and ``direct_call_targets`` the targets
+        of plain call edges leaving expanded nodes; the public wrapper applies
+        the non-exclusive ``also_annotation_handler`` /
+        ``also_called_directly`` notes from them after traversal.
+        """
         if max_depth <= 0 or component_id in visited:
             return None
 
@@ -2100,6 +2285,10 @@ class FlowAnalyzer(IFlowAnalyzer):
             "source": source,
             "calls": [],
         }
+        if edge_kind == EDGE_KIND_ANNOTATION:
+            node["edge_kind"] = EDGE_KIND_ANNOTATION
+        if rendered is not None:
+            rendered[component_id] = node
 
         # Get direct calls from the call graph.
         # Share ONE visited set across the whole traversal (no per-child copy):
@@ -2110,9 +2299,22 @@ class FlowAnalyzer(IFlowAnalyzer):
         # already de-duplicate by id with a `seen` set, so the flattened
         # first-occurrence tree renders identically.
         calls_with_lines = self._call_graph.get(component_id, [])
-        for called_comp, _ in calls_with_lines:
+        for edge in calls_with_lines:
+            # Record annotation-edge targets even when the child is not
+            # expanded here (already visited, or cut by depth): the target may
+            # be rendered elsewhere in the graph, and the wrapper adds the
+            # non-exclusive dual-role note to every direct-rendered node that
+            # any annotation edge points at, so consumers (summarization
+            # prompt, MCP tools) see the implicit role without the direct call
+            # being denied. Plain children keep their exact prior shape.
+            if call_edge_kind(edge) == EDGE_KIND_ANNOTATION:
+                if annotation_targets is not None:
+                    annotation_targets.add(call_edge_target(edge))
+            elif direct_call_targets is not None:
+                direct_call_targets.add(call_edge_target(edge))
             child_node = self._build_call_graph_with_source_recursive(
-                called_comp, max_depth - 1, visited, source_root
+                call_edge_target(edge), max_depth - 1, visited, source_root,
+                rendered, annotation_targets, direct_call_targets, call_edge_kind(edge),
             )
             if child_node:
                 node["calls"].append(child_node)
