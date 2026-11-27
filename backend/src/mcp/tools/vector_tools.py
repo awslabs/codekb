@@ -64,6 +64,8 @@ async def get_component_from_description(
         sink: dict = {}
         cfg = await asyncio.to_thread(codekb_service.get_hyperspace, hyperspace_id, status_sink=sink)
         requested = cfg["space_ids"]
+        if not requested:
+            return f"Hyperspace '{hyperspace_id}' has no member spaces."
         await asyncio.to_thread(preload_space_statuses, ctx, sink)
         # All-or-nothing: refuse if any member is unreadable (gate names them).
         await asyncio.to_thread(gate_hyperspace_read, ctx, requested)
