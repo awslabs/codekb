@@ -472,6 +472,13 @@ class TestCSharpIntegration:
         assert "Example.Test.UserRole" in ids
         assert "Example.Test.User" in ids  # record
 
+        # Enum members are indexed as constants parented under the enum.
+        assert "Example.Test.UserRole.Admin" in ids
+        assert "Example.Test.UserRole.User" in ids
+        assert "Example.Test.UserRole.Guest" in ids
+        admin_member = next(c for c in result if c["id"] == "Example.Test.UserRole.Admin")
+        assert admin_member["type"] == "constant"
+
         # Constants vs variables
         max_users = next(c for c in result if c["id"] == "Example.Test.UserService.MAX_USERS")
         assert max_users["type"] == "constant"

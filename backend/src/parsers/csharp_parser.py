@@ -128,6 +128,7 @@ class CSharpParser(BaseLanguageParser):
                     "interface_body",
                     "struct_body",
                     "enum_body",
+                    "enum_member_declaration_list",
                     "record_body",
                 ):
                     for grandchild in child.children:
@@ -184,6 +185,15 @@ class CSharpParser(BaseLanguageParser):
                 "indexer_declaration",
             ):
                 component = self._extract_member_component(
+                    node, source_lines, file_path, parent_component
+                )
+                if component:
+                    components.append(component)
+                return
+
+            # Enum members: each is a named constant, parented under the enum.
+            if node.type == "enum_member_declaration":
+                component = self._extract_enum_member_component(
                     node, source_lines, file_path, parent_component
                 )
                 if component:
@@ -424,6 +434,43 @@ class CSharpParser(BaseLanguageParser):
             return self._create_component(
                 component_id,
                 component_type,
+                node,
+                file_path,
+                "csharp",
+                attributes,
+                parent_component,
+            )
+        except Exception:
+            return None
+
+    def _extract_enum_member_component(
+        self,
+        node: Any,
+        source_lines: List[str],
+        file_path: Path,
+        parent_component: Optional[str],
+    ) -> Optional[Component]:
+        """Extract a C# enum member as a CONSTANT parented under its enum.
+
+        An `enum_member_declaration` exposes its name via the `name` field
+        (`Red`, `Green = 5`). Enum members are implicitly public static
+        constants.
+        """
+        try:
+            name_node = node.child_by_field_name("name")
+            if name_node is None:
+                return None
+            member_name = self._get_node_text(name_node, source_lines)
+            attributes = ComponentAttributes(
+                signature=self._extract_signature(node, source_lines),
+                visibility=Visibility.PUBLIC,
+                line_count=node.end_point[0] - node.start_point[0] + 1,
+                is_static=True,
+                is_final=True,
+            )
+            return self._create_component(
+                self.make_id(file_path, member_name, parent_component),
+                ComponentType.CONSTANT,
                 node,
                 file_path,
                 "csharp",
