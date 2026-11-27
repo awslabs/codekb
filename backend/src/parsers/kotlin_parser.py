@@ -192,7 +192,7 @@ class KotlinParser(BaseLanguageParser):
             return None
 
     def _extension_receiver(self, node: Any, source_lines: List[str]) -> Optional[str]:
-        """Return the receiver type of an extension function, or None.
+        """Return the receiver type of an extension function or property, or None.
 
         In tree-sitter-kotlin an extension declaration lays the receiver type
         out before the name, separated by a `.`:
@@ -268,7 +268,16 @@ class KotlinParser(BaseLanguageParser):
             if not property_name:
                 return None
 
-            component_id = self.make_id(file_path, property_name, parent_component)
+            # Receiver in the id, as for extension functions: otherwise `val Order.isEligible`
+            # overwrites `fun isEligible`. V2 only, so V1 ids stay stable on refresh.
+            receiver = (
+                self._extension_receiver(node, source_lines)
+                if self._scheme == IdScheme.V2_PATH
+                else None
+            )
+            id_name = f"{receiver}.{property_name}" if receiver else property_name
+
+            component_id = self.make_id(file_path, id_name, parent_component)
 
             visibility = self._extract_visibility(node, source_lines)
             is_constant = self._has_modifier(node, "const") or self._is_val(node)

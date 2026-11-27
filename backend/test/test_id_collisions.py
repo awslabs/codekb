@@ -5,7 +5,7 @@ last-write-wins, silently dropping a component's source/calls/description/vector
 These tests pin the fixes that keep such declarations distinct:
 
   1. Overloaded methods/functions (param-type hash suffix, central pass).
-  2. Kotlin extension functions (receiver type in the id).
+  2. Kotlin extension functions and properties (receiver type in the id).
   3. Kotlin locals inside function bodies/lambdas (not emitted).
   4. C# method name read from the `name` field, not the return type.
   5. Terraform addresses prefixed per-file under V2 (unchanged under V1).
@@ -145,6 +145,82 @@ fun buildOrder() { fun helper(): Int { return 2 } }
     assert "buildCart" in names and "buildOrder" in names
 
 
+def _properties(components, language):
+    return [
+        c for c in components if c.language == language and c.type.value in ("variable", "constant")
+    ]
+
+
+def test_kotlin_extension_property_does_not_overwrite_same_named_function():
+    """`val Order.isEligible` must not replace `fun isEligible`, which holds the rule."""
+    catalog, comps = _analyze(
+        {
+            "rules.kt": """
+fun isEligible(order: Order): Boolean {
+    return order.total > 100 && !order.customer.blocked
+}
+
+val Order.isEligible: Boolean
+    get() = isEligible(this)
+"""
+        }
+    )
+    funcs = [c for c in _methods(comps, "kotlin") if c.get_simple_name() == "isEligible"]
+    props = [c for c in _properties(comps, "kotlin") if c.get_simple_name() == "isEligible"]
+    assert len(funcs) == 1 and len(props) == 1
+    assert funcs[0].id != props[0].id
+    assert props[0].id.endswith(".Order.isEligible")
+    assert "Order" not in funcs[0].id
+    assert catalog.get_statistics()["overwritten_components"] == 0
+
+
+def test_kotlin_extension_properties_keep_receiver():
+    _, comps = _analyze(
+        {
+            "ext.kt": """
+val String.slug: String get() = lowercase()
+val Int.slug: String get() = toString()
+"""
+        }
+    )
+    slugs = [c for c in _properties(comps, "kotlin") if c.get_simple_name() == "slug"]
+    assert len(slugs) == 2
+    assert len({c.id for c in slugs}) == 2
+    assert any(c.id.endswith(".String.slug") for c in slugs)
+    assert any(c.id.endswith(".Int.slug") for c in slugs)
+
+
+def test_kotlin_extension_property_receiver_shapes_match_functions():
+    """Generic and nullable receivers are written into the id as extension functions write them."""
+    _, comps = _analyze(
+        {
+            "ext.kt": """
+val <T> List<T>.second: T get() = this[1]
+val String?.safeLen: Int get() = this?.length ?: 0
+"""
+        }
+    )
+    ids = {c.get_simple_name(): c.id for c in _properties(comps, "kotlin")}
+    assert ids["second"].endswith(".List<T>.second")
+    assert ids["safeLen"].endswith(".String?.safeLen")
+
+
+def test_kotlin_plain_property_id_unchanged():
+    """A dot inside the value or a delegate is not a receiver."""
+    _, comps = _analyze(
+        {
+            "cfg.kt": """
+val total: Int = order.amount.value
+val cache by lazy { a.b }
+"""
+        }
+    )
+    ids = {c.get_simple_name(): c.id for c in _properties(comps, "kotlin")}
+    # `>` closes the file's path hash, so nothing sits between the file and the name.
+    assert ids["total"].endswith(">.total")
+    assert ids["cache"].endswith(">.cache")
+
+
 def test_terraform_same_address_distinct_across_stacks_v2():
     _, comps = _analyze(
         {
@@ -270,6 +346,14 @@ def test_v1_legacy_behavior_is_unchanged():
     assert "helper" in knames  # local kept under V1
     slug = next(c for c in _methods(kcomps, "kotlin") if c.get_simple_name() == "toSlug")
     assert "String" not in slug.id  # no receiver in the id under V1
+
+    # Kotlin: extension property receiver NOT in the id either.
+    _, kpcomps = _analyze(
+        {"p.kt": "val String.slug: String get() = this"},
+        scheme=IdScheme.V1_STEM,
+    )
+    pslug = next(c for c in _properties(kpcomps, "kotlin") if c.get_simple_name() == "slug")
+    assert pslug.id == "t::p.slug"
 
 
 def test_cpp_default_value_decl_and_def_still_merge():
