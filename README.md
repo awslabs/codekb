@@ -1,7 +1,7 @@
 # CodeKB
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
+[![Release](https://img.shields.io/github/v/release/awslabs/codekb?sort=semver&color=blue)](https://github.com/awslabs/codekb/releases/latest)
 
 ## Code understanding for the world of autonomous software factories.
 

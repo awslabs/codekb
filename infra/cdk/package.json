@@ -1,6 +1,5 @@
 {
   "name": "aws-codekb-cdk",
-  "version": "1.0.0",
   "license": "Apache-2.0",
   "private": true,
   "main": "dist/src/main.js",

@@ -4,7 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aws-codekb-backend"
-version = "1.0.0"
+# Placeholder only; setuptools requires a version to build the wheel. Releases are
+# tracked by git tags and CHANGELOG.md, not here — leave this as-is.
+version = "0.0.0"
 description = "Code understanding system"
 license = "Apache-2.0"
 requires-python = ">=3.11"
