@@ -99,6 +99,21 @@ interface IClock {
     assert "DateTime" not in names
 
 
+def test_csharp_parameter_named_from_name_field_not_type():
+    """A parameter typed by a simple name must be named after the parameter,
+    not the type: `DateTime when` is the parameter `when`, not `DateTime`.
+    Same root cause as the member-name fix; not gated, since a parameter name
+    never forms a component id. Applies to V1 too (no refresh-stability risk)."""
+    for scheme in (IdScheme.V2_PATH, IdScheme.V1_STEM):
+        _, comps = _analyze(
+            {"svc.cs": "class S { public void Schedule(DateTime when, int count, User owner) {} }"},
+            scheme=scheme,
+        )
+        sched = next(c for c in _methods(comps, "csharp") if c.get_simple_name() == "Schedule")
+        names = [p.name for p in sched.attributes.parameters]
+        assert names == ["when", "count", "owner"], scheme
+
+
 def test_kotlin_extension_functions_keep_receiver():
     _, comps = _analyze(
         {

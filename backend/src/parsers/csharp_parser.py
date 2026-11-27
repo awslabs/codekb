@@ -225,9 +225,15 @@ class CSharpParser(BaseLanguageParser):
 
     def _extract_parameter_name(self, param_node: Any, source_lines: List[str]) -> Optional[str]:
         """Extract parameter name from a `parameter` node."""
-        # In tree-sitter-c-sharp, a `parameter` typically has children:
-        #   [attribute_list]* [modifier]* [type] identifier [equals_value_clause]
-        # The identifier is the parameter name.
+        # In tree-sitter-c-sharp, a `parameter` is `[attribute]* [modifier]*
+        # type name:identifier [equals_value_clause]`. Use the `name` field:
+        # scanning for the first identifier child instead picks the TYPE when it
+        # is a simple name — `DateTime when` parses the type as an `identifier`
+        # too, so `when` is reported as `DateTime`. (Built-in types like `int`
+        # are `predefined_type` nodes, which is why they happen to work.)
+        name_node = param_node.child_by_field_name("name")
+        if name_node is not None:
+            return self._get_node_text(name_node, source_lines)
         for child in param_node.children:
             if child.type == "identifier":
                 return self._get_node_text(child, source_lines)
