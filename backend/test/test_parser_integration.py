@@ -487,6 +487,13 @@ class TestCSharpIntegration:
         assert user_filter["type"] == "interface"
         assert [p["name"] for p in user_filter["attributes"]["parameters"]] == ["username", "minAge"]
 
+        # A positional record's parameters are indexed as public member variables.
+        assert "Example.Test.User.Name" in ids
+        assert "Example.Test.User.Email" in ids
+        assert "Example.Test.User.Age" in ids
+        name_member = next(c for c in result if c["id"] == "Example.Test.User.Name")
+        assert name_member["type"] == "variable"
+
         # Constants vs variables
         max_users = next(c for c in result if c["id"] == "Example.Test.UserService.MAX_USERS")
         assert max_users["type"] == "constant"

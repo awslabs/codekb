@@ -165,6 +165,13 @@ class CSharpParser(BaseLanguageParser):
                 if component:
                     components.append(component)
                     recurse_into_body(node, component.id)
+                    # A positional record's parameters are its public members.
+                    if node.type in ("record_declaration", "record_struct_declaration"):
+                        components.extend(
+                            self._extract_record_positional_members(
+                                node, source_lines, file_path, component.id
+                            )
+                        )
                 return
 
             # Methods, constructors, destructors, operators, local functions
@@ -453,6 +460,51 @@ class CSharpParser(BaseLanguageParser):
             )
         except Exception:
             return None
+
+    def _extract_record_positional_members(
+        self,
+        node: Any,
+        source_lines: List[str],
+        file_path: Path,
+        record_id: str,
+    ) -> List[Component]:
+        """Extract a positional record's parameters as public member variables.
+
+        `record User(string Name, int Age)` declares `Name` and `Age` as public
+        (init-only) properties, so each is indexed as a VARIABLE parented under
+        the record, mirroring how regular properties are indexed. Gated to
+        records by the caller: a class/struct primary-constructor parameter is
+        not a property and must not be indexed here.
+        """
+        members: List[Component] = []
+        param_list = next(
+            (c for c in node.children if c.type == "parameter_list"), None
+        )
+        if param_list is None:
+            return members
+        for child in param_list.children:
+            if child.type != "parameter":
+                continue
+            name_node = child.child_by_field_name("name")
+            if name_node is None:
+                continue
+            attributes = ComponentAttributes(
+                signature=self._extract_signature(child, source_lines),
+                visibility=Visibility.PUBLIC,
+                line_count=child.end_point[0] - child.start_point[0] + 1,
+            )
+            members.append(
+                self._create_component(
+                    self.make_id(file_path, self._get_node_text(name_node, source_lines), record_id),
+                    ComponentType.VARIABLE,
+                    child,
+                    file_path,
+                    "csharp",
+                    attributes,
+                    record_id,
+                )
+            )
+        return members
 
     def _extract_enum_member_component(
         self,
