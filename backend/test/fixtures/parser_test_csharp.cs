@@ -7,6 +7,9 @@ using System.Collections.Generic;
 
 namespace Example.Test
 {
+    // Delegate: a named callable signature, indexed as a function.
+    public delegate bool UserFilter(string username, int minAge);
+
     // Helper class with static-only methods.
     internal static class StringHelper
     {

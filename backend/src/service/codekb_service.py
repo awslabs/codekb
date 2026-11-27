@@ -1989,7 +1989,10 @@ class CodeKBService:
                     "SUMMARIZING",
                     "summarize",
                     "failed",
-                    extra={"summarize_remedy": remedy},
+                    extra={
+                        "summarize_remedy": remedy,
+                        "summarize_coverage": summary_stats.get("coverage"),
+                    },
                 )
                 logger.warning(
                     f"[worker] Summarization stopped early for {space_id}: "
@@ -2001,7 +2004,10 @@ class CodeKBService:
                     "SUMMARIZING",
                     "summarize",
                     "completed",
-                    extra={"vector_count": summary_stats["total_analyzed"]},
+                    extra={
+                        "vector_count": summary_stats["total_analyzed"],
+                        "summarize_coverage": summary_stats.get("coverage"),
+                    },
                 )
                 logger.info(
                     f"[worker] Summarization complete: "
@@ -3284,14 +3290,27 @@ class CodeKBService:
         self, space_id: str, component_id: str, depth: int
     ) -> dict[str, Any] | None:
         """Build call graph with full source code for a component."""
+        return self.get_call_graph_with_source_diagnosed(space_id, component_id, depth)[0]
+
+    def get_call_graph_with_source_diagnosed(
+        self, space_id: str, component_id: str, depth: int
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Like ``get_call_graph_with_source`` but also returns WHY a build failed.
+
+        Returns ``(graph, None)`` on success, or ``(None, reason)`` where ``reason``
+        names the exact condition — component not in the catalog, a non-callable
+        type, or the source tree being evicted mid-build. The reason is captured
+        here, at build time, so a caller's warning reflects the actual cause even
+        when a transient eviction has since resolved.
+        """
         ctx = self._load_context(space_id)
         comp = ctx.catalog.find_component(component_id)
         if not comp:
-            return None
+            return None, "component id not found in the catalog"
         from ..core.models import ComponentType
 
         if comp.type not in [ComponentType.FUNCTION, ComponentType.METHOD]:
-            return None
+            return None, f"component type '{comp.type.value}' is not a function or method"
 
         # Hydrate before the flow analyzer reads the files with raw open() calls; a
         # recycled container starts with an empty cache.
@@ -3309,13 +3328,13 @@ class CodeKBService:
                 component_id, depth, source_root
             )
             if source_root.is_dir():
-                return result
+                return result, None
             if attempt == 1:
                 logger.info(
                     f"Source tree for '{space_id}' vanished while building a call graph "
                     f"(evicted under disk pressure); re-hydrating and rebuilding once"
                 )
-        return None
+        return None, "source tree evicted from the disk cache during the build (disk pressure)"
 
     # ── summarizer support ──────────────────────────────────────────────
 

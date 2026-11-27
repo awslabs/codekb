@@ -128,6 +128,7 @@ class CSharpParser(BaseLanguageParser):
                     "interface_body",
                     "struct_body",
                     "enum_body",
+                    "enum_member_declaration_list",
                     "record_body",
                 ):
                     for grandchild in child.children:
@@ -164,6 +165,13 @@ class CSharpParser(BaseLanguageParser):
                 if component:
                     components.append(component)
                     recurse_into_body(node, component.id)
+                    # A positional record's parameters are its public members.
+                    if node.type in ("record_declaration", "record_struct_declaration"):
+                        components.extend(
+                            self._extract_record_positional_members(
+                                node, source_lines, file_path, component.id
+                            )
+                        )
                 return
 
             # Methods, constructors, destructors, operators, local functions
@@ -184,6 +192,26 @@ class CSharpParser(BaseLanguageParser):
                 "indexer_declaration",
             ):
                 component = self._extract_member_component(
+                    node, source_lines, file_path, parent_component
+                )
+                if component:
+                    components.append(component)
+                return
+
+            # Enum members: each is a named constant, parented under the enum.
+            if node.type == "enum_member_declaration":
+                component = self._extract_enum_member_component(
+                    node, source_lines, file_path, parent_component
+                )
+                if component:
+                    components.append(component)
+                return
+
+            # Delegates: a named callable contract (a type), surfaced as
+            # INTERFACE. Catalog-only, like other types: no summarization or
+            # embedding cost for what is just a bodyless signature.
+            if node.type == "delegate_declaration":
+                component = self._extract_delegate_component(
                     node, source_lines, file_path, parent_component
                 )
                 if component:
@@ -225,9 +253,15 @@ class CSharpParser(BaseLanguageParser):
 
     def _extract_parameter_name(self, param_node: Any, source_lines: List[str]) -> Optional[str]:
         """Extract parameter name from a `parameter` node."""
-        # In tree-sitter-c-sharp, a `parameter` typically has children:
-        #   [attribute_list]* [modifier]* [type] identifier [equals_value_clause]
-        # The identifier is the parameter name.
+        # In tree-sitter-c-sharp, a `parameter` is `[attribute]* [modifier]*
+        # type name:identifier [equals_value_clause]`. Use the `name` field:
+        # scanning for the first identifier child instead picks the TYPE when it
+        # is a simple name — `DateTime when` parses the type as an `identifier`
+        # too, so `when` is reported as `DateTime`. (Built-in types like `int`
+        # are `predefined_type` nodes, which is why they happen to work.)
+        name_node = param_node.child_by_field_name("name")
+        if name_node is not None:
+            return self._get_node_text(name_node, source_lines)
         for child in param_node.children:
             if child.type == "identifier":
                 return self._get_node_text(child, source_lines)
@@ -267,6 +301,7 @@ class CSharpParser(BaseLanguageParser):
                 is_abstract=self._has_modifier(node, "abstract"),
                 # In C#, `sealed` is the closest analogue to Java's `final` for methods/classes.
                 is_final=self._has_modifier(node, "sealed"),
+                is_extension=self._is_extension_method(node),
             )
 
             if node.type == "constructor_declaration":
@@ -427,11 +462,147 @@ class CSharpParser(BaseLanguageParser):
         except Exception:
             return None
 
+    def _extract_record_positional_members(
+        self,
+        node: Any,
+        source_lines: List[str],
+        file_path: Path,
+        record_id: str,
+    ) -> List[Component]:
+        """Extract a positional record's parameters as public member variables.
+
+        `record User(string Name, int Age)` declares `Name` and `Age` as public
+        (init-only) properties, so each is indexed as a VARIABLE parented under
+        the record, mirroring how regular properties are indexed. Gated to
+        records by the caller: a class/struct primary-constructor parameter is
+        not a property and must not be indexed here.
+        """
+        members: List[Component] = []
+        param_list = next(
+            (c for c in node.children if c.type == "parameter_list"), None
+        )
+        if param_list is None:
+            return members
+        for child in param_list.children:
+            if child.type != "parameter":
+                continue
+            name_node = child.child_by_field_name("name")
+            if name_node is None:
+                continue
+            attributes = ComponentAttributes(
+                signature=self._extract_signature(child, source_lines),
+                visibility=Visibility.PUBLIC,
+                line_count=child.end_point[0] - child.start_point[0] + 1,
+            )
+            members.append(
+                self._create_component(
+                    self.make_id(file_path, self._get_node_text(name_node, source_lines), record_id),
+                    ComponentType.VARIABLE,
+                    child,
+                    file_path,
+                    "csharp",
+                    attributes,
+                    record_id,
+                )
+            )
+        return members
+
+    def _extract_enum_member_component(
+        self,
+        node: Any,
+        source_lines: List[str],
+        file_path: Path,
+        parent_component: Optional[str],
+    ) -> Optional[Component]:
+        """Extract a C# enum member as a CONSTANT parented under its enum.
+
+        An `enum_member_declaration` exposes its name via the `name` field
+        (`Red`, `Green = 5`). Enum members are implicitly public static
+        constants.
+        """
+        try:
+            name_node = node.child_by_field_name("name")
+            if name_node is None:
+                return None
+            member_name = self._get_node_text(name_node, source_lines)
+            attributes = ComponentAttributes(
+                signature=self._extract_signature(node, source_lines),
+                visibility=Visibility.PUBLIC,
+                line_count=node.end_point[0] - node.start_point[0] + 1,
+                is_static=True,
+                is_final=True,
+            )
+            return self._create_component(
+                self.make_id(file_path, member_name, parent_component),
+                ComponentType.CONSTANT,
+                node,
+                file_path,
+                "csharp",
+                attributes,
+                parent_component,
+            )
+        except Exception:
+            return None
+
+    def _extract_delegate_component(
+        self,
+        node: Any,
+        source_lines: List[str],
+        file_path: Path,
+        parent_component: Optional[str],
+    ) -> Optional[Component]:
+        """Extract a C# delegate as an INTERFACE component.
+
+        A `delegate_declaration` is a named callable contract, effectively a
+        single-method interface, so it is mapped to INTERFACE. That keeps it
+        in the catalog (discoverable, with its signature) without the
+        summarization/embedding cost that FUNCTION/METHOD incur for what is a
+        bodyless signature. Its name is in the `name` field and its parameters
+        in a `parameter_list`, so it reuses the method parameter/signature
+        helpers; reading the `name` field also avoids the
+        simple-return-type-as-name trap (`int`/`DateTime`).
+        """
+        try:
+            name_node = node.child_by_field_name("name")
+            if name_node is None:
+                return None
+            name = self._get_node_text(name_node, source_lines)
+            attributes = ComponentAttributes(
+                signature=self._extract_signature(node, source_lines),
+                parameters=self.extract_function_parameters(node, source_lines),
+                visibility=self._extract_visibility(node, source_lines),
+                line_count=node.end_point[0] - node.start_point[0] + 1,
+                is_static=self._has_modifier(node, "static"),
+            )
+            return self._create_component(
+                self.make_id(file_path, name, parent_component),
+                ComponentType.INTERFACE,
+                node,
+                file_path,
+                "csharp",
+                attributes,
+                parent_component,
+            )
+        except Exception:
+            return None
+
     def _extract_member_name(self, node: Any, source_lines: List[str]) -> Optional[str]:
         """Extract the name of a field/property/event/indexer declaration."""
         # property_declaration / event_declaration / indexer_declaration:
         #   modifiers type identifier ...
         if node.type in ("property_declaration", "event_declaration", "indexer_declaration"):
+            # Use the declaration's `name` field directly. Scanning for the
+            # first identifier child instead picks the TYPE when it is a simple
+            # name — `DateTime CreatedAt` parses as "DateTime" — so every member
+            # of that type collapses onto one id. Mirrors `_extract_method_name`.
+            #
+            # V2 only: this changes the component id, so legacy V1 spaces keep
+            # the first-identifier behavior for refresh stability and adopt the
+            # fix on a deliberate full V2 reindex.
+            if self._scheme == IdScheme.V2_PATH:
+                name_node = node.child_by_field_name("name")
+                if name_node is not None:
+                    return self._get_node_text(name_node, source_lines)
             for child in node.children:
                 if child.type == "identifier":
                     return self._get_node_text(child, source_lines)
@@ -525,6 +696,19 @@ class CSharpParser(BaseLanguageParser):
             elif child.type.lower() == target:
                 return True
         return False
+
+    def _is_extension_method(self, node: Any) -> bool:
+        """True for a C# extension method: a `this` modifier on the first parameter.
+
+        The call graph uses this to let an instance-style call
+        (`value.Slugify()`) resolve to the static extension method by its bare
+        name, which plain receiver-name matching intentionally does not do.
+        """
+        param_list = next((c for c in node.children if c.type == "parameter_list"), None)
+        if param_list is None:
+            return False
+        first_param = next((c for c in param_list.children if c.type == "parameter"), None)
+        return first_param is not None and self._has_modifier(first_param, "this")
 
     def _extract_signature(self, node: Any, source_lines: List[str]) -> str:
         """Extract method/class signature (first line, capped at 200 chars)."""

@@ -394,6 +394,10 @@ class FlowAnalyzer(IFlowAnalyzer):
         self._typed_method_lookup = {}
         self._file_and_parent_by_id = {}
         self._ids_by_file_and_name = defaultdict(list)
+        # C# extension methods indexed by their bare name. An instance-style call
+        # `receiver.Method()` binds to one of these by name alone, since the
+        # method lives on an unrelated static class, not the receiver's type.
+        self._extension_methods_by_name: Dict[str, str] = {}
 
         # Create the base lookup and collect the secondary indexes in one pass.
         for comp in components:
@@ -409,6 +413,10 @@ class FlowAnalyzer(IFlowAnalyzer):
                 self._ids_by_file_and_name[(comp.file_path, simple_name)].append(
                     (comp.id, comp.parent_component)
                 )
+                # First-wins on an ambiguous extension-method name, matching the
+                # bare-name lookup's own policy.
+                if comp.attributes.is_extension:
+                    self._extension_methods_by_name.setdefault(simple_name, comp.id)
 
             # Preserve the existing first-component-wins behavior for an
             # ambiguous unqualified simple name.
@@ -573,6 +581,18 @@ class FlowAnalyzer(IFlowAnalyzer):
                 continue
             simple_name = nested.get_simple_name()
             component_lookup[f"{parent_id}::{simple_name}"] = nested.id
+
+    def _resolve_extension_call(self, call_name: str) -> Optional[str]:
+        """Resolve a C# instance-style extension-method call by its bare name.
+
+        `value.Slugify()` is defined as a static method on an unrelated class, so
+        neither type-based nor dotted-name resolution binds it. Match the
+        trailing segment against the extension-method index. Only verified
+        extension methods are indexed, so this does not reintroduce the general
+        strip-the-receiver guess that produces false edges for ordinary calls.
+        """
+        bare_name = call_name.rsplit(".", 1)[-1]
+        return self._extension_methods_by_name.get(bare_name)
 
     def _resolve_call_with_scope(
         self, call_name: str, caller_component: str, component_lookup: Dict[str, str]
@@ -1030,6 +1050,11 @@ class FlowAnalyzer(IFlowAnalyzer):
         target_id = self._resolve_call_with_types(call_name, local_var_types, component_lookup)
         if not target_id:
             target_id = self._resolve_call_with_scope(call_name, component_id, component_lookup)
+        # Last resort for C#: an extension method called in instance form resolves
+        # neither by receiver type nor by its dotted name. Match it by bare name
+        # against verified extension methods only.
+        if not target_id and language == "csharp":
+            target_id = self._resolve_extension_call(call_name)
 
         if target_id and target_id != component_id:
             calls_with_lines.append((target_id, call_line))
@@ -2106,9 +2131,9 @@ class FlowAnalyzer(IFlowAnalyzer):
         # each component is expanded at most once, making this O(V+E) instead of
         # exponential on dense graphs (a function reachable by many paths was
         # previously re-expanded on every path). Behavior-preserving: the
-        # consumers (_format_call_graph in flow_tools and topdown_summarizer)
-        # already de-duplicate by id with a `seen` set, so the flattened
-        # first-occurrence tree renders identically.
+        # consumers (_format_call_graph in flow_tools and SummarizationPacker in
+        # topdown_summarizer) already de-duplicate by id with a `seen` set, so the
+        # flattened first-occurrence tree renders identically.
         calls_with_lines = self._call_graph.get(component_id, [])
         for called_comp, _ in calls_with_lines:
             child_node = self._build_call_graph_with_source_recursive(

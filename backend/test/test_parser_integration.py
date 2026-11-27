@@ -472,6 +472,28 @@ class TestCSharpIntegration:
         assert "Example.Test.UserRole" in ids
         assert "Example.Test.User" in ids  # record
 
+        # Enum members are indexed as constants parented under the enum.
+        assert "Example.Test.UserRole.Admin" in ids
+        assert "Example.Test.UserRole.User" in ids
+        assert "Example.Test.UserRole.Guest" in ids
+        admin_member = next(c for c in result if c["id"] == "Example.Test.UserRole.Admin")
+        assert admin_member["type"] == "constant"
+
+        # Delegates are a callable contract: indexed as an interface (catalog
+        # only, no summarization cost), named from the `name` field, with their
+        # parameters extracted.
+        assert "Example.Test.UserFilter" in ids
+        user_filter = next(c for c in result if c["id"] == "Example.Test.UserFilter")
+        assert user_filter["type"] == "interface"
+        assert [p["name"] for p in user_filter["attributes"]["parameters"]] == ["username", "minAge"]
+
+        # A positional record's parameters are indexed as public member variables.
+        assert "Example.Test.User.Name" in ids
+        assert "Example.Test.User.Email" in ids
+        assert "Example.Test.User.Age" in ids
+        name_member = next(c for c in result if c["id"] == "Example.Test.User.Name")
+        assert name_member["type"] == "variable"
+
         # Constants vs variables
         max_users = next(c for c in result if c["id"] == "Example.Test.UserService.MAX_USERS")
         assert max_users["type"] == "constant"
@@ -505,6 +527,34 @@ class TestCSharpIntegration:
         assert "Example.Test.UserProcessor.ProcessUser" in call_graph
         process_calls = call_graph["Example.Test.UserProcessor.ProcessUser"]
         assert "Example.Test.StringHelper.Clean" in process_calls
+
+    def test_csharp_extension_method_call_graph(self, csharp_lang, tmp_path):
+        """An extension method called in instance form (`value.Slugify()`)
+        resolves to its definition, like the explicit static call does. An
+        ordinary receiver call whose type is unknown stays unresolved, so the
+        extension fallback adds no false edge."""
+        src = (
+            "namespace N {\n"
+            "  public static class StringExt {\n"
+            "    public static string Slugify(this string s) { return s.Trim(); }\n"
+            "  }\n"
+            "  public class Repo { public void Save() {} }\n"
+            "  public class Svc {\n"
+            "    public string Run(string input) { return input.Slugify(); }\n"
+            "    public string Direct(string input) { return StringExt.Slugify(input); }\n"
+            "    public void Touch(object o) { o.Save(); }\n"
+            "  }\n"
+            "}\n"
+        )
+        f = tmp_path / "ext.cs"
+        f.write_text(src)
+        _, call_graph = parse_and_analyze(f, CSharpParser, csharp_lang)
+
+        # Both call styles reach the one extension-method definition.
+        assert "N.StringExt.Slugify" in call_graph.get("N.Svc.Run", [])
+        assert "N.StringExt.Slugify" in call_graph.get("N.Svc.Direct", [])
+        # `o.Save()` on an unknown type is not an extension call, so no edge.
+        assert "N.Repo.Save" not in call_graph.get("N.Svc.Touch", [])
 
 
 @pytest.mark.skipif(not CSHARP_AVAILABLE, reason="tree_sitter_c_sharp not installed")

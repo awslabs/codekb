@@ -1890,6 +1890,7 @@ class RefreshOrchestrator:
                 "summarize_done": summarized,
                 "summarize_percent": 100.0,
                 "total_analyzed": summary_stats.get("total_analyzed", 0),
+                "summarize_coverage": summary_stats.get("coverage"),
             },
         )
 
@@ -2506,6 +2507,12 @@ class RefreshOrchestrator:
             return (
                 "AI summarization stopped after repeated Bedrock failures. "
                 "Use Refresh space to try again."
+            )
+        if stop_reason == "incomplete_coverage":
+            return (
+                "AI summarization finished but some functions still have no "
+                "description (the model did not return them). Use Refresh space "
+                "to try again; see the service logs for the affected functions."
             )
         return "AI summarization stopped early. Use Refresh space to try again."
 

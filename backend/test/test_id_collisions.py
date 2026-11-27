@@ -78,6 +78,42 @@ class S {
     assert "Task" not in names
 
 
+def test_csharp_properties_named_from_name_field_not_type():
+    """Properties typed by a simple name must be named after the property, not
+    the type: three `DateTime` properties are three components, not one."""
+    _, comps = _analyze(
+        {
+            "svc.cs": """
+interface IClock {
+  DateTime CreatedAt { get; set; }
+  DateTime UpdatedAt { get; set; }
+  DateTime DeletedAt { get; set; }
+}
+"""
+        }
+    )
+    props = [c for c in comps if c.language == "csharp" and c.type.value in ("variable", "constant")]
+    names = {c.get_simple_name() for c in props}
+    assert names == {"CreatedAt", "UpdatedAt", "DeletedAt"}
+    assert len({c.id for c in props}) == 3  # distinct ids, no collapse
+    assert "DateTime" not in names
+
+
+def test_csharp_parameter_named_from_name_field_not_type():
+    """A parameter typed by a simple name must be named after the parameter,
+    not the type: `DateTime when` is the parameter `when`, not `DateTime`.
+    Same root cause as the member-name fix; not gated, since a parameter name
+    never forms a component id. Applies to V1 too (no refresh-stability risk)."""
+    for scheme in (IdScheme.V2_PATH, IdScheme.V1_STEM):
+        _, comps = _analyze(
+            {"svc.cs": "class S { public void Schedule(DateTime when, int count, User owner) {} }"},
+            scheme=scheme,
+        )
+        sched = next(c for c in _methods(comps, "csharp") if c.get_simple_name() == "Schedule")
+        names = [p.name for p in sched.attributes.parameters]
+        assert names == ["when", "count", "owner"], scheme
+
+
 def test_kotlin_extension_functions_keep_receiver():
     _, comps = _analyze(
         {
@@ -216,6 +252,14 @@ def test_v1_legacy_behavior_is_unchanged():
     assert all("_" not in c.id.rsplit(".", 1)[-1] for c in cs)  # no overload hash suffix
     assert all("#" not in c.id for c in cs)
     assert any(c.get_simple_name() == "Task" for c in cs)  # legacy return-type name kept
+
+    # C# properties typed by a simple name still collapse to the type under V1.
+    _, pcomps = _analyze(
+        {"c.cs": "interface I { DateTime A { get; set; } DateTime B { get; set; } }"},
+        scheme=IdScheme.V1_STEM,
+    )
+    pnames = {c.get_simple_name() for c in pcomps if c.type.value in ("variable", "constant")}
+    assert pnames == {"DateTime"}  # legacy type-name collapse kept
 
     # Kotlin: extension receiver NOT in the id, and locals ARE still emitted.
     _, kcomps = _analyze(

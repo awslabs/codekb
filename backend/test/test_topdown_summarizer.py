@@ -1,6 +1,13 @@
+import logging
+
 import pytest
 
-from src.vector.topdown_summarizer import TopDownSummarizer
+from src.vector.topdown_summarizer import (
+    TopDownSummarizer,
+    _OUTCOME_OK,
+    _OUTCOME_TRUNCATED,
+)
+from src.vector.summarization_packer import PackedCall
 from test.bedrock_fakes import (
     CapturingBedrockClient,
     FakeBedrockClient,
@@ -14,6 +21,13 @@ class FakeRelevanceService:
 
     def get_business_relevance_tier(self, space_id: str, component_id: str) -> str | None:
         return self.tiers.get(component_id)
+
+    def get_call_graph_with_source_diagnosed(self, space_id, component_id, depth):
+        """Mirror the real service: delegate to get_call_graph_with_source and
+        report a reason when it yields nothing, so the summarizer's diagnosed
+        fetch path works against every fake (patched or subclassed)."""
+        graph = self.get_call_graph_with_source(space_id, component_id, depth)
+        return graph, (None if graph is not None else "component id not found in the catalog")
 
 
 class TestTopDownSummarizerRelevanceFiltering:
@@ -70,7 +84,7 @@ class TestTopDownSummarizerTokenCapture:
             )
         )
 
-        out = s._call_bedrock("prompt", "input text")
+        out, _ = s._call_bedrock("prompt", "input text")
 
         assert out == "a description"
         totals = s.token_usage.totals()
@@ -92,7 +106,7 @@ class TestTopDownSummarizerTokenCapture:
         s = self._summarizer()
         s._bedrock_client = FakeBedrockClient(anthropic_body("ok"))
 
-        out = s._call_bedrock("p", "i")
+        out, _ = s._call_bedrock("p", "i")
 
         assert out == "ok"
         assert s.token_usage.is_empty()
@@ -120,7 +134,7 @@ class TestTopDownSummarizerResponseParsing:
             anthropic_body("the answer", thinking="internal reasoning")
         )
 
-        assert s._call_bedrock("p", "i") == "the answer"
+        assert s._call_bedrock("p", "i")[0] == "the answer"
 
     def test_thinking_text_is_never_returned(self):
         s = self._summarizer()
@@ -128,7 +142,7 @@ class TestTopDownSummarizerResponseParsing:
             anthropic_body("the answer", thinking="internal reasoning")
         )
 
-        assert "internal reasoning" not in s._call_bedrock("p", "i")
+        assert "internal reasoning" not in s._call_bedrock("p", "i")[0]
 
     def test_response_with_no_text_block_is_rejected(self):
         s = self._summarizer()
@@ -147,72 +161,30 @@ class TestTopDownSummarizerResponseParsing:
             s._call_bedrock("p", "i")
 
 
-class TestReplaceSourceWithDescriptions:
-    """A cached function must be fully masked, even when its source has blank lines."""
+class TestFlooredCallIsRecorded:
+    """A floored (truncated) call must surface reduced fidelity, not pass silently."""
 
-    def _render(self, graph: dict) -> str:
-        output: list[str] = []
-        TopDownSummarizer._format_call_graph(graph, output, seen=set())
-        return "\n".join(output)
+    def _summarizer(self):
+        return TopDownSummarizer("/tmp/project", "space", codekb_service=FakeRelevanceService({}))
 
-    def _summarizer(self, cache: dict[str, str]) -> TopDownSummarizer:
-        s = TopDownSummarizer("/tmp/project", "space", codekb_service=FakeRelevanceService({}))
-        s._description_cache.update(cache)
-        return s
+    def test_floored_call_logs_reduced_fidelity(self, caplog, monkeypatch):
+        s = self._summarizer()
+        monkeypatch.setattr(s, "_generate_and_index", lambda text, label: 0)
+        call = PackedCall(text="...", source_ids=["space::a.big"], floored=True)
+        with caplog.at_level(logging.WARNING):
+            s._run_packed_call(call, "space::a.big")
+        assert any(
+            "reduced fidelity" in r.message and "space::a.big" in r.message
+            for r in caplog.records
+        )
 
-    def test_cached_source_with_blank_line_is_fully_masked(self):
-        graph = {
-            "id": "space::a.caller",
-            "type": "function",
-            "source": "def caller():\n    x = 1\n\n    return callee(x)",
-            "calls": [
-                {
-                    "id": "space::a.callee",
-                    "type": "function",
-                    "source": "def callee(x):\n    y = x + 1\n\n    LEAK_MARKER = y\n    return y",
-                    "calls": [],
-                }
-            ],
-        }
-        s = self._summarizer({"space::a.callee": "Adds one."})
-
-        out = s._replace_source_with_descriptions(self._render(graph))
-
-        assert "CACHED DESCRIPTION:" in out
-        assert "Adds one." in out
-        assert "def callee" not in out
-        assert "LEAK_MARKER" not in out
-        # The uncached caller keeps its full source, blank line included.
-        assert "return callee(x)" in out
-
-    def test_children_of_cached_node_are_kept(self):
-        graph = {
-            "id": "space::a.root",
-            "type": "function",
-            "source": "def root():\n    mid()",
-            "calls": [
-                {
-                    "id": "space::a.mid",
-                    "type": "method",
-                    "source": "def mid(self):\n\n    MID_BODY = leaf()",
-                    "calls": [
-                        {
-                            "id": "space::a.leaf",
-                            "type": "function",
-                            "source": "def leaf():\n    return 1",
-                            "calls": [],
-                        }
-                    ],
-                }
-            ],
-        }
-        s = self._summarizer({"space::a.mid": "Calls leaf."})
-
-        out = s._replace_source_with_descriptions(self._render(graph))
-
-        assert "MID_BODY" not in out
-        assert "space::a.leaf (function)" in out
-        assert "def leaf():" in out
+    def test_non_floored_call_does_not_warn(self, caplog, monkeypatch):
+        s = self._summarizer()
+        monkeypatch.setattr(s, "_generate_and_index", lambda text, label: 0)
+        call = PackedCall(text="...", source_ids=["space::a.ok"], floored=False)
+        with caplog.at_level(logging.WARNING):
+            s._run_packed_call(call, "space::a.ok")
+        assert not any("reduced fidelity" in r.message for r in caplog.records)
 
 
 class TestTopDownSummarizerInputCap:
@@ -225,34 +197,34 @@ class TestTopDownSummarizerInputCap:
 
     def test_bounded_input_truncates_oversized(self):
         s = self._summarizer()
-        s._max_input_chars = 100
-        out = s._bounded_input("x" * 500)
-        assert len(out) == 100
+        s._packer_word_budget = 5
+        out = s._bounded_input("x " * 500)   # 500 words -> truncated to 5
+        assert len(out.split()) == 5
 
     def test_bounded_input_passes_through_within_cap(self):
         s = self._summarizer()
-        s._max_input_chars = 1000
-        text = "y" * 500
+        s._packer_word_budget = 1000
+        text = "y " * 500
         assert s._bounded_input(text) == text
 
-    def test_zero_cap_disables_truncation(self):
+    def test_zero_budget_disables_truncation(self):
         s = self._summarizer()
-        s._max_input_chars = 0
-        text = "z" * 10000
+        s._packer_word_budget = 0
+        text = "z " * 10000
         assert s._bounded_input(text) == text
 
     def test_call_bedrock_applies_cap(self):
         s = self._summarizer()
-        s._max_input_chars = 50
+        s._packer_word_budget = 5
         client = CapturingBedrockClient(anthropic_body("ok"))
         s._bedrock_client = client
 
-        s._call_bedrock("prompt", "q" * 500)
+        s._call_bedrock("prompt", "q " * 500)
 
         content = client.sent_message_content()
-        # Input truncated to 50 chars; the run of 51 would mean no truncation.
-        assert "q" * 50 in content
-        assert "q" * 51 not in content
+        # Input truncated to 5 words; a 6th word would mean no truncation.
+        assert "q q q q q" in content
+        assert "q q q q q q" not in content
 
 
 class TestTopDownSummarizerGuardrails:
@@ -313,7 +285,7 @@ class TestTopDownSummarizerGuardrails:
         s._circuit_breaker = CircuitBreaker(1)
         s._bedrock_client = FakeBedrockClient(anthropic_body("ok"))
 
-        assert s._call_bedrock("p", "i") == "ok"
+        assert s._call_bedrock("p", "i")[0] == "ok"
         assert not s._circuit_breaker.is_open
 
 
@@ -807,7 +779,7 @@ class TestSummarizeTargetedSkipsDescribedTargets:
 
         def fake_generate(text):
             prompts.append(text)
-            return next(replies)
+            return next(replies), _OUTCOME_OK
 
         s._generate_descriptions = fake_generate
         progress: list[tuple[int, int]] = []
@@ -852,7 +824,8 @@ class TestSummarizeTargetedRelevanceFilter:
 
         def fake_generate(text):
             prompts.append(text)
-            return {"high": "H desc"} if "high" in text else {"low": "L desc"}
+            d = {"high": "H desc"} if "high" in text else {"low": "L desc"}
+            return d, _OUTCOME_OK
 
         s._generate_descriptions = fake_generate
         progress: list[tuple[int, int]] = []
@@ -906,7 +879,7 @@ class TestSummarizeTargetedConcurrency:
 
         def fake_generate(text):
             barrier.wait()
-            return _describe_defs(text)
+            return _describe_defs(text), _OUTCOME_OK
 
         s, service = self._summarizer({depth: ["a", "b"]}, fake_generate)
         asyncio.run(s.summarize_all(targets={"a", "b"}, prior_descriptions={}))
@@ -919,7 +892,7 @@ class TestSummarizeTargetedConcurrency:
         def fake_generate(text):
             if "def a(" in text:
                 raise RuntimeError("Bedrock throttled")
-            return _describe_defs(text)
+            return _describe_defs(text), _OUTCOME_OK
 
         s, service = self._summarizer({3: ["a", "b"]}, fake_generate)
         stats = asyncio.run(s.summarize_all(targets={"a", "b"}, prior_descriptions={}))
@@ -936,7 +909,7 @@ class TestSummarizeTargetedConcurrency:
             if "def a(" in text:
                 s._circuit_breaker.record_failure()
                 raise RuntimeError("Bedrock down")
-            return _describe_defs(text)
+            return _describe_defs(text), _OUTCOME_OK
 
         s, service = self._summarizer({3: ["a", "b"], 2: ["c"]}, fake_generate)
         s._circuit_breaker = CircuitBreaker(1)
@@ -944,3 +917,76 @@ class TestSummarizeTargetedConcurrency:
 
         assert "c" not in service.indexed
         assert stats["stopped_early"] == "circuit_breaker_open"
+
+
+class TestCoverageGateAndAdaptiveReconcile:
+    """Strict coverage gate + adaptive-shrink reconcile (customer-reported fix)."""
+
+    def _run(self, by_depth, targets, fake_generate, **attrs):
+        import asyncio
+
+        service = _IndexingGraphService(by_depth)
+        s = TopDownSummarizer("/tmp/project", "space", codekb_service=service)
+        s._batch_depth_threshold, s._batch_size = 5, 100  # force the batched path
+        for k, v in attrs.items():
+            setattr(s, k, v)
+        s._generate_descriptions = fake_generate
+        stats = asyncio.run(s.summarize_all(targets=set(targets), prior_descriptions={}))
+        return service, stats
+
+    def _present(self, text, targets):
+        return [t for t in targets if f'"id": "{t}"' in text]
+
+    def test_incomplete_coverage_fails_the_run_and_reports_coverage(self):
+        # The model never returns a description for "b" → strict gate fails.
+        def fake(text):
+            described = {t: f"{t} desc" for t in self._present(text, ["a", "b"]) if t != "b"}
+            return described, _OUTCOME_OK
+
+        service, stats = self._run({0: ["a", "b"]}, ["a", "b"], fake)
+
+        assert service.indexed == ["a"]
+        assert stats["coverage"] == "1/2"
+        assert stats["stopped_early"] == "incomplete_coverage"
+
+    def test_full_coverage_completes_and_reports_n_over_n(self):
+        def fake(text):
+            return {t: f"{t} desc" for t in self._present(text, ["a", "b"])}, _OUTCOME_OK
+
+        service, stats = self._run({0: ["a", "b"]}, ["a", "b"], fake)
+
+        assert sorted(service.indexed) == ["a", "b"]
+        assert stats["coverage"] == "2/2"
+        assert stats["stopped_early"] is None
+
+    def test_truncated_batch_splits_until_each_fits_one_at_a_time(self):
+        # A call with >1 function "truncates" (empty + TRUNCATED); a single
+        # function succeeds. Adaptive split must still cover all four.
+        ids = ["a", "b", "c", "d"]
+
+        def fake(text):
+            present = self._present(text, ids)
+            if len(present) > 1:
+                return {}, _OUTCOME_TRUNCATED          # output too big → cut
+            return {present[0]: f"{present[0]} desc"}, _OUTCOME_OK
+
+        service, stats = self._run({0: ids}, ids, fake)
+
+        assert sorted(service.indexed) == ids
+        assert stats["coverage"] == "4/4"
+        assert stats["stopped_early"] is None
+
+    def test_no_progress_round_does_not_resend_forever(self):
+        # The model returns valid JSON but never any of the requested ids. The
+        # loop must stop (no infinite identical re-send) and fail coverage.
+        calls = {"n": 0}
+
+        def fake(text):
+            calls["n"] += 1
+            return {}, _OUTCOME_OK
+
+        service, stats = self._run({0: ["a", "b"]}, ["a", "b"], fake)
+
+        assert service.indexed == []
+        assert stats["stopped_early"] == "incomplete_coverage"
+        assert calls["n"] <= 6  # bounded, not spinning

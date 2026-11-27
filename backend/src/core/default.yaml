@@ -245,7 +245,7 @@ llm:
     model_id: "us.anthropic.claude-opus-4-6-v1"
     # Hard cap on output tokens per call, thinking included.
     # Env: CODEKB_BEDROCK_MAX_TOKENS
-    max_tokens: 65536
+    max_tokens: 128000
     # thinking.type sent to the model. model_default sends no thinking field,
     # so the model's own default applies: no thinking on Claude Opus 4.8 and
     # earlier, adaptive thinking on Claude 5.x. Any other value (adaptive,
@@ -306,7 +306,14 @@ summarization:
   # functions and shrink as indexed callees become CACHED DESCRIPTION.
   # 1 disables re-requesting.
   batch_reconcile_max_rounds: 3
-  max_input_chars: 200000
+  # Input packing budget, in TOKENS. The summarizer fits each description call
+  # into COMPLETE units (whole functions / depth levels / batch members) under
+  # this budget, instead of cutting text and losing the tail. Set it from your
+  # model's context window (read the model docs). Packing is sized in words — a
+  # model-agnostic proxy — using ~2 tokens/word with a 10% safety margin, and the
+  # fixed prompt overhead is subtracted, so the whole prompt stays under this
+  # token limit. 0 disables the cap. Override: CODEKB_SUMMARIZATION_INPUT_TOKEN_BUDGET.
+  input_token_budget: 200000
   # Abort a summarization run once cumulative tokens (input+output across the
   # run) reach this ceiling — a cost guardrail. 0 disables.
   token_budget: 0
@@ -315,7 +322,7 @@ summarization:
   circuit_breaker_threshold: 5
   # Parallel LLM calls within a depth level. 1 = serial. Higher values speed
   # up summarization but increase Bedrock load. Override: CODEKB_SUMMARIZATION_CONCURRENCY.
-  concurrency: 1
+  concurrency: 40
   # Stale in-progress detection thresholds (seconds), used by get_analysis_status.
   # warn: soft "taking longer than usual" message; the status is kept. Also the
   # interval at which the process logs "Pipeline still running" for any
