@@ -10,6 +10,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
+import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
 import Input from "@cloudscape-design/components/input";
 import Select from "@cloudscape-design/components/select";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
@@ -134,21 +135,21 @@ export default function SpaceDetail() {
   const [overviewLoadFailed, setOverviewLoadFailed] = useState<Record<string, boolean>>({});
   const [activeOverviewDoc, setActiveOverviewDoc] = useState<string | null>(null);
   const [overviewSubmitting, setOverviewSubmitting] = useState(false);
-  // Output language for the next Overview (re)generation. Starts at the space's
-  // stored setting; sent with the generate request, which also saves it.
-  const overviewLanguageOptions = SUPPORTED_LANGUAGES.map((l) => ({
-    label: l.displayName,
-    value: l.languageCode as string,
-  }));
-  const [overviewLanguage, setOverviewLanguage] = useState<string>(DEFAULT_LANGUAGE);
+  // The Overview generate/regenerate buttons open a language menu; picking a
+  // language starts generation in it (the request also saves it on the space).
+  // The space's stored language is shown checked; unset/unsupported means en.
   const storedOverviewLanguage = space?.overview_language;
-  useEffect(() => {
-    setOverviewLanguage(
-      SUPPORTED_LANGUAGES.some((l) => l.languageCode === storedOverviewLanguage)
-        ? (storedOverviewLanguage as string)
-        : DEFAULT_LANGUAGE
-    );
-  }, [storedOverviewLanguage]);
+  const currentOverviewLanguage: string = SUPPORTED_LANGUAGES.some(
+    (l) => l.languageCode === storedOverviewLanguage
+  )
+    ? (storedOverviewLanguage as string)
+    : DEFAULT_LANGUAGE;
+  const overviewLanguageItems = SUPPORTED_LANGUAGES.map((l) => ({
+    id: l.languageCode as string,
+    text: l.displayName,
+    itemType: "checkbox" as const,
+    checked: l.languageCode === currentOverviewLanguage,
+  }));
   const [overviewEnabled, setOverviewEnabled] = useState(true);
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTabId, setActiveTabId] = useState(() => searchParams.get("tab") || "codebase");
@@ -435,12 +436,12 @@ export default function SpaceDetail() {
 
   // Generate (or regenerate from scratch) the Space Overview. Clears any
   // locally-cached doc content so freshly generated docs are re-fetched.
-  const generateOverview = async () => {
+  const generateOverview = async (language: string) => {
     if (!spaceId || overviewGenerating || isRefreshing) return;
     setOverviewSubmitting(true);
     try {
-      await api.generateOverview(spaceId, overviewLanguage);
-      setSpace((prev) => (prev ? { ...prev, overview_language: overviewLanguage } : prev));
+      await api.generateOverview(spaceId, language);
+      setSpace((prev) => (prev ? { ...prev, overview_language: language } : prev));
       setOverviewDocs({});
       setOverviewLoadFailed({});
       setActiveOverviewDoc(null);
@@ -859,18 +860,21 @@ export default function SpaceDetail() {
       type: "warning",
       content: t("spaceDetail.staleOverviews"),
       action: (
-        <Button
+        <ButtonDropdown
+          items={overviewLanguageItems}
           disabled={!overviewEnabled || isRefreshing}
           disabledReason={
             !overviewEnabled
               ? t("spaceDetail.overviewDisabled")
               : undefined
           }
-          onClick={async () => {
+          ariaLabel={t("spaceDetail.overviewLanguageLabel")}
+          expandToViewport
+          onItemClick={async ({ detail }) => {
             if (!spaceId) return;
             try {
-              await api.generateOverview(spaceId, overviewLanguage);
-              setSpace((prev) => (prev ? { ...prev, overview_language: overviewLanguage } : prev));
+              await api.generateOverview(spaceId, detail.id);
+              setSpace((prev) => (prev ? { ...prev, overview_language: detail.id } : prev));
               await loadStatus();
             } catch (e: any) {
               showError(t("spaceDetail.errStartOverview", { message: e.message }));
@@ -878,7 +882,7 @@ export default function SpaceDetail() {
           }}
         >
           {t("spaceDetail.regenerateOverview")}
-        </Button>
+        </ButtonDropdown>
       ),
       dismissible: true,
       onDismiss: () => {/* allow dismiss */},
@@ -1186,20 +1190,8 @@ export default function SpaceDetail() {
                       text={combinedOverviewMd}
                       disabled={!allOverviewDocsLoaded || overviewGenerating}
                     />
-                    <Select
-                      selectedOption={
-                        overviewLanguageOptions.find((o) => o.value === overviewLanguage) ??
-                        overviewLanguageOptions[0]
-                      }
-                      onChange={({ detail }) =>
-                        setOverviewLanguage(detail.selectedOption.value ?? DEFAULT_LANGUAGE)
-                      }
-                      options={overviewLanguageOptions}
-                      disabled={overviewGenerating || isRefreshing}
-                      ariaLabel={t("spaceDetail.overviewLanguageLabel")}
-                    />
-                    <Button
-                      iconName="refresh"
+                    <ButtonDropdown
+                      items={overviewLanguageItems}
                       loading={overviewGenerating}
                       disabled={!overviewEnabled || overviewGenerating || isRefreshing}
                       disabledReason={
@@ -1207,10 +1199,12 @@ export default function SpaceDetail() {
                           ? t("spaceDetail.overviewDisabled")
                           : undefined
                       }
-                      onClick={generateOverview}
+                      ariaLabel={t("spaceDetail.overviewLanguageLabel")}
+                      expandToViewport
+                      onItemClick={({ detail }) => void generateOverview(detail.id)}
                     >
                       {t("spaceDetail.regenerate")}
-                    </Button>
+                    </ButtonDropdown>
                   </SpaceBetween>
                 }
               >
@@ -1325,22 +1319,9 @@ export default function SpaceDetail() {
                   description={t("spaceDetail.generateDesc")}
                   actions={
                     !overviewGenerating ? (
-                      <SpaceBetween direction="horizontal" size="xs">
-                      <Select
-                        selectedOption={
-                          overviewLanguageOptions.find((o) => o.value === overviewLanguage) ??
-                          overviewLanguageOptions[0]
-                        }
-                        onChange={({ detail }) =>
-                          setOverviewLanguage(detail.selectedOption.value ?? DEFAULT_LANGUAGE)
-                        }
-                        options={overviewLanguageOptions}
-                        disabled={overviewGenerating || isRefreshing}
-                        ariaLabel={t("spaceDetail.overviewLanguageLabel")}
-                      />
-                      <Button
+                      <ButtonDropdown
                         variant="primary"
-                        iconName="gen-ai"
+                        items={overviewLanguageItems}
                         loading={overviewSubmitting}
                         disabled={!overviewEnabled || overviewSubmitting || isRefreshing}
                         disabledReason={
@@ -1348,11 +1329,12 @@ export default function SpaceDetail() {
                             ? t("spaceDetail.overviewDisabled")
                             : undefined
                         }
-                        onClick={generateOverview}
+                        ariaLabel={t("spaceDetail.overviewLanguageLabel")}
+                        expandToViewport
+                        onItemClick={({ detail }) => void generateOverview(detail.id)}
                       >
                         {t("spaceDetail.generateOverview")}
-                      </Button>
-                      </SpaceBetween>
+                      </ButtonDropdown>
                     ) : undefined
                   }
                 >
