@@ -146,6 +146,77 @@ fun buildOrder() { fun helper(): Int { return 2 } }
     assert "buildCart" in names and "buildOrder" in names
 
 
+def test_java_overloads_do_not_collide():
+    """Java method overloads (same name, same class, different parameter lists)
+    survive as distinct components under V2 via the param-signature hash suffix,
+    while the display / resolution name stays the bare method name."""
+    catalog, comps = _analyze(
+        {
+            "svc.java": """
+class OrderService {
+  public void save(User u) {}
+  public void save(User u, boolean force) {}
+  public void save(User u, boolean force, int retries) {}
+}
+"""
+        }
+    )
+    saves = [c for c in _methods(comps, "java") if c.get_simple_name() == "save"]
+    assert len(saves) == 3
+    assert len({c.id for c in saves}) == 3
+    assert all(c.id.rsplit(".", 1)[-1].startswith("save#") for c in saves)
+    assert all(c.get_simple_name() == "save" for c in saves)
+    assert catalog.get_statistics()["overwritten_components"] == 0
+
+
+def test_kotlin_overloads_do_not_collide():
+    """Kotlin method overloads survive as distinct components under V2. This is
+    the reported case (a class with several getTemplate overloads kept only one
+    before the central disambiguation pass ran for Kotlin)."""
+    catalog, comps = _analyze(
+        {
+            "svc.kt": """
+class TemplateService {
+    fun getTemplate(id: String): String { return id }
+    fun getTemplate(id: String, version: Int): String { return id }
+    fun getTemplate(id: String, version: Int, locale: String): String { return id }
+}
+"""
+        }
+    )
+    gets = [c for c in _methods(comps, "kotlin") if c.get_simple_name() == "getTemplate"]
+    assert len(gets) == 3
+    assert len({c.id for c in gets}) == 3
+    assert all(c.id.rsplit(".", 1)[-1].startswith("getTemplate#") for c in gets)
+    assert all(c.get_simple_name() == "getTemplate" for c in gets)
+    assert catalog.get_statistics()["overwritten_components"] == 0
+
+
+def test_typescript_overload_signatures_not_indexed():
+    """TypeScript overloading is N type-only signatures plus exactly ONE
+    implementation body (the compiler forbids a second body). The parser
+    extracts only implementation nodes (`method_definition` /
+    `function_declaration`) and skips signature-only nodes (`method_signature` /
+    `function_signature`), so an overloaded name yields exactly one component —
+    the implementation — and no collision occurs. This pins the current
+    behaviour; indexing the overload signatures as their own components would be
+    a separate TypeScript-parser change, after which they would flow through the
+    same overload hash as the other languages."""
+    catalog, comps = _analyze(
+        {
+            "svc.ts": """
+export class TemplateService {
+  getTemplate(id: string): string;
+  getTemplate(id: string, version: number): string;
+  getTemplate(id: string, version?: number): string { return id; }
+}
+"""
+        }
+    )
+    gets = [c for c in _methods(comps, "typescript") if c.get_simple_name() == "getTemplate"]
+    assert len(gets) == 1  # only the implementation body is indexed
+    assert "#" not in gets[0].id  # single component, so no overload discriminator
+    assert catalog.get_statistics()["overwritten_components"] == 0
 def _properties(components, language):
     return [
         c for c in components if c.language == language and c.type.value in ("variable", "constant")
