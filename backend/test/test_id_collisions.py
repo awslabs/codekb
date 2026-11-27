@@ -6,7 +6,8 @@ These tests pin the fixes that keep such declarations distinct:
 
   1. Overloaded methods/functions (param-type hash suffix, central pass).
   2. Kotlin extension functions and properties (receiver type in the id).
-  3. Kotlin locals inside function bodies/lambdas (not emitted).
+  3. Kotlin locals inside function bodies/lambdas (not emitted), and companion
+     members (companion name in the id).
   4. C# method name read from the `name` field, not the return type.
   5. Terraform addresses prefixed per-file under V2 (unchanged under V1).
   6. ComponentCatalog counts overwrites in its statistics.
@@ -221,6 +222,92 @@ val cache by lazy { a.b }
     assert ids["cache"].endswith(">.cache")
 
 
+_KOTLIN_ORDER_WITH_COMPANION = """
+class Order(val total: Int) {
+    val label: String = "order"
+
+    fun create(): Order {
+        return Order(total * 2)
+    }
+
+    companion object {
+        val label: String = "factory"
+
+        fun create(): Order {
+            return Order(0)
+        }
+
+        fun empty(): Order {
+            return Order(0)
+        }
+    }
+}
+
+class Shop {
+    fun open(): Order {
+        return Order.empty()
+    }
+}
+"""
+
+
+def _after_file(component_id):
+    """The id past the file's path hash: `t::Order<ab12>.Order.label` -> `.Order.label`."""
+    return component_id.split(">", 1)[1]
+
+
+def test_kotlin_companion_members_do_not_collide_with_class_members():
+    catalog, comps = _analyze({"Order.kt": _KOTLIN_ORDER_WITH_COMPANION})
+    order = next(c for c in comps if c.get_simple_name() == "Order" and c.type.value == "class")
+    labels = [c for c in _properties(comps, "kotlin") if c.get_simple_name() == "label"]
+    creates = [c for c in _methods(comps, "kotlin") if c.get_simple_name() == "create"]
+    assert sorted(_after_file(c.id) for c in labels) == [".Order.Companion.label", ".Order.label"]
+    # No `#` overload suffix: the two `create` no longer share an id.
+    assert sorted(_after_file(c.id) for c in creates) == [
+        ".Order.Companion.create",
+        ".Order.create",
+    ]
+    # The parent stays the class, so calls like `Order.empty()` still resolve.
+    assert all(c.parent_component == order.id for c in labels + creates)
+    assert catalog.get_statistics()["overwritten_components"] == 0
+
+
+def test_kotlin_named_companion_uses_its_name():
+    _, comps = _analyze(
+        {"a.kt": "class A {\n  companion object Factory {\n    fun make(): Int = 1\n  }\n}\n"}
+    )
+    make = next(c for c in _methods(comps, "kotlin") if c.get_simple_name() == "make")
+    assert _after_file(make.id) == ".A.Factory.make"
+
+
+def test_kotlin_call_to_companion_member_still_resolves():
+    catalog, comps = _analyze({"Order.kt": _KOTLIN_ORDER_WITH_COMPANION})
+    open_ = next(c for c in _methods(comps, "kotlin") if c.get_simple_name() == "open")
+    empty = next(c for c in _methods(comps, "kotlin") if c.get_simple_name() == "empty")
+    assert _after_file(empty.id) == ".Order.Companion.empty"
+    assert _call_graph(catalog).get(open_.id) == [empty.id]
+
+
+def test_kotlin_class_nested_in_companion_carries_companion():
+    _, comps = _analyze(
+        {
+            "Order.kt": """
+class Order {
+    companion object {
+        class Builder {
+            fun build(): Int = 1
+        }
+    }
+}
+"""
+        }
+    )
+    builder = next(c for c in comps if c.get_simple_name() == "Builder")
+    build = next(c for c in _methods(comps, "kotlin") if c.get_simple_name() == "build")
+    assert _after_file(builder.id) == ".Order.Companion.Builder"
+    assert _after_file(build.id) == ".Order.Companion.Builder.build"
+
+
 def test_terraform_same_address_distinct_across_stacks_v2():
     _, comps = _analyze(
         {
@@ -354,6 +441,14 @@ def test_v1_legacy_behavior_is_unchanged():
     )
     pslug = next(c for c in _properties(kpcomps, "kotlin") if c.get_simple_name() == "slug")
     assert pslug.id == "t::p.slug"
+
+    # Kotlin: companion NOT in the id either.
+    _, kccomps = _analyze(
+        {"a.kt": "class A {\n  companion object {\n    fun make(): Int = 1\n  }\n}\n"},
+        scheme=IdScheme.V1_STEM,
+    )
+    make = next(c for c in _methods(kccomps, "kotlin") if c.get_simple_name() == "make")
+    assert make.id == "t::a.A.make"
 
 
 def test_cpp_default_value_decl_and_def_still_merge():
