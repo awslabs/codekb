@@ -115,6 +115,11 @@ Existing spaces normally remain usable because upgrades don't rewrite them. If a
 older Git space fails to load, refresh it; recreate an older zip space from its
 archive.
 
+Existing hyperspace overviews without a recorded document ETag must be regenerated
+once. Their read endpoint returns 409 with a regeneration message until then.
+Changing a hyperspace's members also clears its overview; generate a new one for
+the updated membership.
+
 ## Stacks
 
 Stacks are named `<prefix>-<component>`. The prefix is `CODEKB_PROJECT`

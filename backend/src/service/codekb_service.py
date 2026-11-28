@@ -2245,7 +2245,7 @@ class CodeKBService:
 
     @staticmethod
     def _is_precondition_failed(err: ClientError) -> bool:
-        """True when a conditional S3 write lost the race (another writer won)."""
+        """True when a conditional S3 request lost the race (another writer won)."""
         return err.response.get("Error", {}).get("Code") == "PreconditionFailed"
 
     def start_overview_generation(self, space_id: str) -> dict[str, Any]:
@@ -3805,6 +3805,20 @@ class CodeKBService:
 
         if space_ids is not None:
             self._validate_hyperspace_members(space_ids)
+            if set(space_ids) != set(cfg.get("space_ids") or []):
+                # Old documents contain the previous members' content. Clear
+                # their catalog before the new membership becomes readable.
+                cfg["hyperspace_overview_docs"] = []
+                cfg.pop("overview_member_snapshot", None)
+                cfg.pop("overview_stats", None)
+                # Keep an active worker's claim so another generation cannot
+                # start while it is still running.
+                if cfg.get("overview_status") != "in_progress":
+                    for key in (
+                        "overview_status", "overview_done", "overview_total",
+                        "overview_percent", "overview_error",
+                    ):
+                        cfg.pop(key, None)
             cfg["space_ids"] = space_ids
             # Swapped to a fully valid membership — clear any stale invalid
             # markers left over from a previously deleted member.
@@ -3917,15 +3931,16 @@ class CodeKBService:
             return True
         return any(d.get("stale") for d in docs)
 
-    def get_hyperspace_overview_document(self, hyperspace_id: str, doc_key: str) -> str:
-        """Read a Hyperspace Overview markdown document from S3.
+    def get_hyperspace_overview_document(
+        self, hyperspace_id: str, doc_key: str, *, config: dict[str, Any] | None = None
+    ) -> str:
+        """Read a catalogued overview belonging to the checked member set.
 
-        Raises HyperspaceNotFoundError if the hyperspace, the doc_key, or the
-        generated document does not exist.
+        The API passes the same enriched config used for its access check.
+        The catalog's ETag binds that config to the document read from S3, even
+        if another generation replaces the object before this read.
         """
-        cfg = self._read_hyperspace(hyperspace_id)
-        if not cfg:
-            raise HyperspaceNotFoundError(hyperspace_id)
+        cfg = config if config is not None else self.get_hyperspace(hyperspace_id)
 
         from ..vector.hyperspace_overview_generator import HYPERSPACE_OVERVIEW_DOCUMENTS
 
@@ -3933,15 +3948,46 @@ class CodeKBService:
         if not doc_def:
             raise HyperspaceNotFoundError(f"Unknown hyperspace overview document: {doc_key}")
 
+        doc = next(
+            (d for d in cfg.get("hyperspace_overview_docs") or [] if d.get("key") == doc_key),
+            None,
+        )
+        if doc is None:
+            raise HyperspaceNotFoundError(f"Overview document not found: {doc_key}")
+
+        snapshot = cfg.get("overview_member_snapshot")
+        member_ids = set(cfg.get("space_ids") or [])
+        if (
+            not snapshot
+            or not member_ids
+            or {member.get("space_id") for member in snapshot} != member_ids
+            or cfg.get("invalid")
+            or cfg.get("missing_space_ids")
+            or not doc.get("etag")
+        ):
+            # Also covers old catalogs and workers that finish after a member
+            # edit. Their provenance cannot authorize the current membership.
+            raise ServiceError(
+                "This overview no longer matches its member spaces. Regenerate the overview.",
+                status_code=409,
+            )
+
         bucket = self.kb_manager._get_s3_bucket()
         s3_key = f"hyperspaces/{hyperspace_id}/docs/{doc_def['filename']}"
         try:
-            resp = self.kb_manager.s3_client.get_object(Bucket=bucket, Key=s3_key)
+            resp = self.kb_manager.s3_client.get_object(
+                Bucket=bucket, Key=s3_key, IfMatch=doc["etag"]
+            )
             return resp["Body"].read().decode("utf-8")
-        except Exception:
+        except Exception as e:
+            if isinstance(e, ClientError) and self._is_precondition_failed(e):
+                raise ServiceError(
+                    "The overview changed while it was being read. Reload and try again.",
+                    status_code=409,
+                ) from e
             raise HyperspaceNotFoundError(
                 f"Overview document not found: {doc_key} for hyperspace {hyperspace_id}"
-            )
+            ) from e
 
     def start_hyperspace_overview_generation(self, hyperspace_id: str) -> dict[str, Any]:
         """Trigger Hyperspace Overview generation for an existing hyperspace.
@@ -4106,7 +4152,7 @@ class CodeKBService:
             doc_catalog = []
             for doc in result["documents"]:
                 s3_path = f"hyperspaces/{hyperspace_id}/docs/{doc['filename']}"
-                self.kb_manager.s3_client.put_object(
+                response = self.kb_manager.s3_client.put_object(
                     Bucket=bucket,
                     Key=s3_path,
                     Body=doc["content"].encode("utf-8"),
@@ -4117,6 +4163,7 @@ class CodeKBService:
                         "key": doc["key"],
                         "title": doc["title"],
                         "s3_path": s3_path,
+                        "etag": response["ETag"],
                         "generated_at": doc["generated_at"],
                     }
                 )
