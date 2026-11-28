@@ -1132,13 +1132,13 @@ class CodeKBService:
                     "was left intact. Nothing was removed. Try again once the vector "
                     "store is reachable."
                 )
-                # Write FAILED status
+                # Keep ownership and provenance so the caller can inspect and retry.
                 self._write_status(space_id, {
+                    **(status_data or {}),
                     "space_id": space_id,
                     "status": "FAILED",
                     "error": error_msg,
                     "updated_at": now,
-                    **({"space_name": status_data.get("space_name")} if status_data and status_data.get("space_name") else {}),
                 })
                 raise ServiceError(error_msg) from e
 
@@ -1202,11 +1202,11 @@ class CodeKBService:
                     "finish."
                 )
                 self._write_status(space_id, {
+                    **(status_data or {}),
                     "space_id": space_id,
                     "status": "FAILED",
                     "error": error_msg,
                     "updated_at": now,
-                    **({"space_name": status_data.get("space_name")} if status_data and status_data.get("space_name") else {}),
                 })
                 raise ServiceError(error_msg) from e
 
@@ -1244,11 +1244,11 @@ class CodeKBService:
             logger.error(f"Unexpected error deleting space '{space_id}': {e}", exc_info=True)
             error_msg = f"Unexpected error during deletion: {str(e)}"
             self._write_status(space_id, {
+                **(status_data or {}),
                 "space_id": space_id,
                 "status": "FAILED",
                 "error": error_msg,
                 "updated_at": now,
-                **({"space_name": status_data.get("space_name")} if status_data and status_data.get("space_name") else {}),
             })
             raise ServiceError(error_msg) from e
 
@@ -2858,6 +2858,7 @@ class CodeKBService:
             self._write_status(
                 space_id,
                 {
+                    **existing_status,
                     "space_id": space_id,
                     "status": "FAILED",
                     "source_type": "upload",
