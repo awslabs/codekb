@@ -34,6 +34,7 @@ async def find_component(name: str, raw_output: bool = False, ctx: Context = Non
     result = codekb_service.find_component(sid, component_name)
     if result is None:
         return f"Component '{component_name}' not found."
+    _overlay_vector_description(codekb_service, sid, result)
     return (
         json.dumps(wrap_external_fields(result), default=str)
         if raw_output
@@ -62,6 +63,7 @@ async def search_components(pattern: str, raw_output: bool = False, ctx: Context
     results = codekb_service.search_components(sid, search_pattern)
     if not results:
         return f"No components matching '{pattern}'"
+    _overlay_vector_descriptions(codekb_service, sid, results)
     if raw_output:
         return json.dumps(wrap_external_fields(results), default=str)
     return _format_component_list(results)
@@ -110,6 +112,7 @@ async def show_component(name: str, raw_output: bool = False, ctx: Context = Non
     result = codekb_service.find_component(sid, component_name)
     if result is None:
         return f"Component '{component_name}' not found."
+    _overlay_vector_description(codekb_service, sid, result)
     if raw_output:
         return json.dumps(wrap_external_fields(result), default=str)
     return _format_component_detail(result)
@@ -135,6 +138,39 @@ async def get_stats(space_id: str, raw_output: bool = False, ctx: Context = None
 
 
 # ── formatting helpers ──────────────────────────────────────────────────
+
+
+def _overlay_vector_description(codekb_service, space_id: str, result: dict) -> None:
+    """Replace the catalog's heuristic description with the vector-store generated
+    one when available, in place.
+
+    The catalog holds the SimpleBusinessBehaviorAnalyzer heuristic text; the
+    LLM-generated business description lives only in the vector store. This mirrors
+    the REST find_component route so the MCP tools surface the same description.
+    A single component id maps to one vector, so this is one get_vector() call.
+    """
+    vector_desc = codekb_service.get_vector_description(space_id, result["id"])
+    if vector_desc:
+        result.setdefault("business_behavior", {})["description"] = vector_desc
+
+
+def _overlay_vector_descriptions(codekb_service, space_id: str, results: list[dict]) -> None:
+    """Batched counterpart of _overlay_vector_description for a list of results.
+
+    Replaces each result's heuristic description with the vector-store generated one
+    in place, using a single batched lookup rather than one call per component.
+    Results without a stored vector description keep their catalog value.
+    """
+    if not results:
+        return
+    ids = [r["id"] for r in results if r.get("id")]
+    descriptions = codekb_service.get_vector_descriptions(space_id, ids)
+    if not descriptions:
+        return
+    for r in results:
+        desc = descriptions.get(r.get("id"))
+        if desc:
+            r.setdefault("business_behavior", {})["description"] = desc
 
 
 def _format_component(comp: dict) -> str:
