@@ -3189,6 +3189,27 @@ class CodeKBService:
             logger.warning(f"Failed to fetch vector description for '{component_id}': {e}")
             return None
 
+    def get_vector_descriptions(
+        self, space_id: str, component_ids: list[str]
+    ) -> dict[str, str]:
+        """Fetch AI-generated descriptions from the vector store for many components.
+
+        Batched counterpart of get_vector_description, for callers that resolve a
+        list (search / list). Returns ``{component_id: description}`` for ids that
+        have a stored description; ids without one are omitted. Returns ``{}`` on
+        error so the caller degrades to the catalog heuristic.
+        """
+        if not component_ids:
+            return {}
+        try:
+            from ..vector.s3_vectors_client import S3VectorsClient
+
+            client = S3VectorsClient()
+            return client.get_descriptions(component_ids)
+        except Exception as e:
+            logger.warning(f"Failed to fetch vector descriptions for '{space_id}': {e}")
+            return {}
+
     def _component_relevance_metadata(self, space_id: str, component_id: str) -> dict[str, Any]:
         """Return persisted business relevance metadata for a component."""
         try:

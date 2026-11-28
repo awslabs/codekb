@@ -63,6 +63,7 @@ async def search_components(pattern: str, raw_output: bool = False, ctx: Context
     results = codekb_service.search_components(sid, search_pattern)
     if not results:
         return f"No components matching '{pattern}'"
+    _overlay_vector_descriptions(codekb_service, sid, results)
     if raw_output:
         return json.dumps(wrap_external_fields(results), default=str)
     return _format_component_list(results)
@@ -151,6 +152,25 @@ def _overlay_vector_description(codekb_service, space_id: str, result: dict) -> 
     vector_desc = codekb_service.get_vector_description(space_id, result["id"])
     if vector_desc:
         result.setdefault("business_behavior", {})["description"] = vector_desc
+
+
+def _overlay_vector_descriptions(codekb_service, space_id: str, results: list[dict]) -> None:
+    """Batched counterpart of _overlay_vector_description for a list of results.
+
+    Replaces each result's heuristic description with the vector-store generated one
+    in place, using a single batched lookup rather than one call per component.
+    Results without a stored vector description keep their catalog value.
+    """
+    if not results:
+        return
+    ids = [r["id"] for r in results if r.get("id")]
+    descriptions = codekb_service.get_vector_descriptions(space_id, ids)
+    if not descriptions:
+        return
+    for r in results:
+        desc = descriptions.get(r.get("id"))
+        if desc:
+            r.setdefault("business_behavior", {})["description"] = desc
 
 
 def _format_component(comp: dict) -> str:
