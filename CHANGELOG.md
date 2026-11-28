@@ -15,6 +15,12 @@ infrastructure together.
 
 ### Added
 
+- `POST /api/spaces/{space_id}/retry` re-runs a failed analysis of a Git
+  repository, or one that has made no progress for
+  `summarization.warn_after_stale_s`, under the same space ID and commit. It
+  restores the stored source archive and generates descriptions only for the
+  functions that have none, instead of creating a new space and describing
+  everything again.
 - The C# parser indexes more of the language: enum members (as constants),
   delegates (as interfaces), and a positional record's parameters (as member
   variables), so these symbols appear in the catalog alongside the rest.
