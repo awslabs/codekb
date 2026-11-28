@@ -2627,8 +2627,13 @@ class CodeKBService:
         """
         self._update_pipeline_status(space_id, "ANALYZING", "clone", "in_progress")
         try:
+            # symlinks=True copies a link as a link, so nothing outside the stored
+            # tree is ever read into the working tree.
             shutil.copytree(
-                self.source_provider.source_root(space_id), source_dir, dirs_exist_ok=True
+                self.source_provider.source_root(space_id),
+                source_dir,
+                symlinks=True,
+                dirs_exist_ok=True,
             )
         except Exception as e:
             logger.error(f"[worker] Stored source unavailable for {space_id}: {e}")
