@@ -34,6 +34,7 @@ async def find_component(name: str, raw_output: bool = False, ctx: Context = Non
     result = codekb_service.find_component(sid, component_name)
     if result is None:
         return f"Component '{component_name}' not found."
+    _overlay_vector_description(codekb_service, sid, result)
     return (
         json.dumps(wrap_external_fields(result), default=str)
         if raw_output
@@ -110,6 +111,7 @@ async def show_component(name: str, raw_output: bool = False, ctx: Context = Non
     result = codekb_service.find_component(sid, component_name)
     if result is None:
         return f"Component '{component_name}' not found."
+    _overlay_vector_description(codekb_service, sid, result)
     if raw_output:
         return json.dumps(wrap_external_fields(result), default=str)
     return _format_component_detail(result)
@@ -135,6 +137,20 @@ async def get_stats(space_id: str, raw_output: bool = False, ctx: Context = None
 
 
 # ── formatting helpers ──────────────────────────────────────────────────
+
+
+def _overlay_vector_description(codekb_service, space_id: str, result: dict) -> None:
+    """Replace the catalog's heuristic description with the vector-store generated
+    one when available, in place.
+
+    The catalog holds the SimpleBusinessBehaviorAnalyzer heuristic text; the
+    LLM-generated business description lives only in the vector store. This mirrors
+    the REST find_component route so the MCP tools surface the same description.
+    A single component id maps to one vector, so this is one get_vector() call.
+    """
+    vector_desc = codekb_service.get_vector_description(space_id, result["id"])
+    if vector_desc:
+        result.setdefault("business_behavior", {})["description"] = vector_desc
 
 
 def _format_component(comp: dict) -> str:
