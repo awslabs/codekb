@@ -39,8 +39,13 @@
 - It can't be deleted while marked `ANALYZING`, `SUMMARIZING` or `REFRESHING`.
   On the first detailed status check after 12 hours without progress
   (`CODEKB_SUMMARIZATION_FAIL_AFTER_STALE_S`), CodeKB marks it failed. Then retry
-  a failed refresh with **Refresh space**, or delete a failed analysis and create
-  the space again.
+  a failed refresh with **Refresh space**.
+- Retry a failed analysis of a Git repository with
+  `POST /api/spaces/{space_id}/retry`. It keeps the space ID and commit, and does
+  not regenerate the descriptions the earlier run stored. The same call works on
+  an analysis that has made no progress for 30 minutes
+  (`CODEKB_SUMMARIZATION_WARN_AFTER_STALE_S`), without waiting for the 12 hours.
+  A failed analysis of a ZIP upload is deleted and created again.
 
 **The container can't find AWS credentials, or they expire**
 - Check from the host first: `aws sts get-caller-identity`.

@@ -112,6 +112,18 @@ class AnalysisStatus(BaseModel):
     refresh_errors: list[str] | None = None
 
 
+@router.post("/{space_id}/retry", status_code=202)
+async def retry_space(space_id: str, request: Request, _authz: None = Depends(gate_write)) -> dict:
+    """Re-run a failed or stalled Git analysis, keeping its ID, commit and descriptions."""
+    require_current_user(request)
+    try:
+        return CodeKBService.instance().retry_space(space_id)
+    except SpaceNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Space not found: {space_id}")
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+
 @router.post("/{space_id}/refresh", status_code=202)
 async def refresh_space(
     space_id: str, request: Request, _authz: None = Depends(gate_write)
