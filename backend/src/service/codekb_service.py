@@ -15,6 +15,7 @@ import os
 import posixpath
 import re
 import secrets
+import shutil
 import socket
 import stat
 import subprocess
@@ -1966,7 +1967,23 @@ class CodeKBService:
                 on_progress=_on_progress,
                 omit_low_business_relevance=omit_low_business_relevance,
             )
-            summary_stats = asyncio.run(summarizer.summarize_all())
+            # A retry runs on the same source as the run it resumes, so the
+            # descriptions that run stored are still right: describe only the rest.
+            saved: dict[str, str] = {}
+            if (self._read_status(space_id) or {}).get("retried_at"):
+                from ..vector.s3_vectors_client import S3VectorsClient
+
+                callables = set(self.get_call_depths(space_id))
+                saved = S3VectorsClient().get_descriptions(sorted(callables))
+                logger.info(f"[worker] Retry keeps {len(saved)} stored description(s)")
+            summary_stats = asyncio.run(
+                summarizer.summarize_all(
+                    targets=callables - set(saved) if saved else None,
+                    prior_descriptions=saved or None,
+                )
+            )
+            # total_analyzed becomes the space's vector_count.
+            summary_stats["total_analyzed"] += len(saved)
             stopped_early = summary_stats.get("stopped_early")
             if stopped_early:
                 # Stopped early: fail the step with a curated remedy under
@@ -2461,6 +2478,7 @@ class CodeKBService:
             "status": "ANALYZING",
             "git_url": git_url,
             "branch": branch,
+            "summarize": summarize,
             "omit_low_business_relevance": omit_low_business_relevance,
             "visibility": visibility,
             "provider": get_provider(git_url),
@@ -2508,6 +2526,125 @@ class CodeKBService:
             "status": "SUBMITTED",
             "message": "Analysis started. Poll GET /api/spaces/{id}/status for progress.",
         }
+
+    # ── retry ──────────────────────────────────────────────────────────
+
+    # Left behind by the run being retried; the new run writes its own.
+    _RETRY_DROPPED_FIELDS = ("error", "failed_at", "warning", "pipeline_steps", "current_step")
+
+    @staticmethod
+    def _retry_refusal(status: dict[str, Any]) -> str | None:
+        """Why this space cannot be retried, or None when it can.
+
+        A FAILED analysis can. So can one still marked in progress whose
+        heartbeat is older than ``summarization.warn_after_stale_s``: its worker
+        is taken to be gone (for example its task was replaced), without waiting
+        for ``fail_after_stale_s`` to mark it FAILED.
+        """
+        if not status.get("git_url") or not status.get("git_commit_hash"):
+            return "it has no stored Git source to resume. Start a new analysis instead."
+        state = status.get("status")
+        if state == "FAILED":
+            return None
+        if state in ("ANALYZING", "SUMMARIZING"):
+            warn_after = int(require_config("summarization.warn_after_stale_s"))
+            try:
+                age_s = (
+                    datetime.now(timezone.utc) - datetime.fromisoformat(status["updated_at"])
+                ).total_seconds()
+            except (KeyError, ValueError, TypeError):
+                age_s = 0
+            if warn_after > 0 and age_s > warn_after:
+                return None
+            return "its analysis is still running."
+        return f"it is {state}. Only a failed or stalled analysis can be retried."
+
+    def retry_space(self, space_id: str) -> dict[str, Any]:
+        """Re-run a failed or stalled Git analysis under the same space ID.
+
+        The source is the archive the earlier run stored, so the commit does not
+        change, and functions that already have a description are not sent to
+        the model again.
+
+        Raises:
+            SpaceNotFoundError: No such space.
+            ServiceError: The space cannot be retried, or another request
+                claimed it first (409).
+            PipelineCapacityError: Every pipeline slot is in use.
+        """
+        with pipeline_pool().reserve("analysis", space_id) as slot:
+            prior, etag = self._read_status_with_etag(space_id)
+            if prior is None:
+                raise SpaceNotFoundError(space_id)
+            refusal = self._retry_refusal(prior)
+            if refusal:
+                raise ServiceError(
+                    f"Space '{space_id}' cannot be retried: {refusal}", status_code=409
+                )
+            now = datetime.now(timezone.utc).isoformat()
+            status = {k: v for k, v in prior.items() if k not in self._RETRY_DROPPED_FIELDS}
+            status.update(status="ANALYZING", retried_at=now, updated_at=now)
+            try:
+                # Conditional on the status that was read, so of several retries
+                # (from any process) only one starts a job.
+                self._write_status(space_id, status, if_match=etag)
+            except ClientError as e:
+                if self._is_precondition_failed(e):
+                    raise ServiceError(
+                        f"Space '{space_id}' is busy: another operation started first.",
+                        status_code=409,
+                    ) from e
+                raise
+            source_dir = self._analysis_work_path(space_id)
+            # Statuses written before the flag was recorded: summarization was on
+            # if the earlier run reached that step.
+            summarize = prior.get(
+                "summarize",
+                any(s.get("step") == "summarize" for s in prior.get("pipeline_steps", [])),
+            )
+            with self._undo_unless_submitted(slot, lambda: self._write_status(space_id, prior)):
+                slot.submit(
+                    self._run_pipeline,
+                    space_id,
+                    source_dir,
+                    bool(summarize),
+                    bool(prior.get("omit_low_business_relevance")),
+                    lambda: self._acquire_source_stored(space_id, source_dir, prior),
+                )
+
+        return {
+            "space_id": space_id,
+            "status": "SUBMITTED",
+            "message": "Retry started. Poll GET /api/spaces/{id}/status for progress.",
+        }
+
+    def _acquire_source_stored(
+        self, space_id: str, source_dir: Path, prior: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Acquire source from the archive an earlier run of this space stored.
+
+        Returns source-specific metadata for the final status, or None on failure.
+        """
+        self._update_pipeline_status(space_id, "ANALYZING", "clone", "in_progress")
+        try:
+            shutil.copytree(
+                self.source_provider.source_root(space_id), source_dir, dirs_exist_ok=True
+            )
+        except Exception as e:
+            logger.error(f"[worker] Stored source unavailable for {space_id}: {e}")
+            self._update_pipeline_status(
+                space_id,
+                "FAILED",
+                "clone",
+                "failed",
+                extra={
+                    "error": "The stored source of this space could not be read. "
+                    "Start a new analysis instead."
+                },
+            )
+            return None
+        self._update_pipeline_status(space_id, "ANALYZING", "clone", "completed")
+        return {name: prior.get(name) for name in ("git_url", "git_commit_hash", "branch")}
 
     # ── space refresh ──────────────────────────────────────────────────
 
