@@ -19,7 +19,7 @@ from pathlib import Path
 
 from src.analysis.code_analyzer import CodeAnalyzer
 from src.catalog.component_catalog import ComponentCatalog
-from src.core.models import IdScheme
+from src.core.models import DISAMBIG_SEP, IdScheme
 
 
 def _analyze(files: dict[str, str], scheme: IdScheme = IdScheme.V2_PATH):
@@ -291,6 +291,63 @@ val cache by lazy { a.b }
     # `>` closes the file's path hash, so nothing sits between the file and the name.
     assert ids["total"].endswith(">.total")
     assert ids["cache"].endswith(">.cache")
+
+
+def _assert_property_function_collision_resolved(catalog, comps, language, name="bar"):
+    """Shared assertions: a same-class property/field and function of one name
+    both survive with distinct ids — the function keeps its bare id, the
+    property-like member carries its kind as the discriminator — and nothing is
+    overwritten."""
+    methods = [c for c in _methods(comps, language) if c.get_simple_name() == name]
+    props = [c for c in _properties(comps, language) if c.get_simple_name() == name]
+    assert len(methods) == 1 and len(props) == 1
+    assert methods[0].id != props[0].id
+    assert DISAMBIG_SEP not in methods[0].id  # the function keeps its bare id
+    # kind-derived (variable/constant), not hardcoded — a `val` parses as constant.
+    assert props[0].id == f"{methods[0].id}{DISAMBIG_SEP}{props[0].type.value}"
+    assert catalog.get_statistics()["overwritten_components"] == 0
+
+
+def test_java_field_and_method_same_class_do_not_collide():
+    catalog, comps = _analyze(
+        {"Foo.java": "class Foo {\n  int bar;\n  int bar() { return bar; }\n}\n"}
+    )
+    _assert_property_function_collision_resolved(catalog, comps, "java")
+
+
+def test_python_attr_and_method_same_class_do_not_collide():
+    catalog, comps = _analyze(
+        {"m.py": "class C:\n    bar = 1\n    def bar(self):\n        return 2\n"}
+    )
+    _assert_property_function_collision_resolved(catalog, comps, "python")
+
+
+def test_kotlin_val_and_method_same_class_do_not_collide():
+    catalog, comps = _analyze(
+        {"Foo.kt": "class Foo {\n    val bar: Int = 1\n    fun bar(): Int { return 2 }\n}\n"}
+    )
+    _assert_property_function_collision_resolved(catalog, comps, "kotlin")
+
+
+def test_property_function_collision_is_order_independent():
+    """The two resulting ids do not depend on declaration order."""
+    field_first = _analyze(
+        {"Foo.java": "class Foo {\n  int bar;\n  int bar(){return 0;}\n}\n"}
+    )[1]
+    method_first = _analyze(
+        {"Foo.java": "class Foo {\n  int bar(){return 0;}\n  int bar;\n}\n"}
+    )[1]
+    ids_a = {c.id for c in field_first if c.get_simple_name() == "bar"}
+    ids_b = {c.id for c in method_first if c.get_simple_name() == "bar"}
+    assert ids_a == ids_b and len(ids_a) == 2
+
+
+def test_noncolliding_field_id_has_no_discriminator():
+    """A field with no same-name sibling keeps its plain id — the kind tag is
+    only appended on an actual collision."""
+    _, comps = _analyze({"Foo.java": "class Foo {\n  int total;\n}\n"})
+    total = next(c for c in comps if c.get_simple_name() == "total")
+    assert DISAMBIG_SEP not in total.id
 
 
 _KOTLIN_ORDER_WITH_COMPANION = """

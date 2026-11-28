@@ -308,17 +308,18 @@ class CodeAnalyzer:
                         ruby_qualifier.qualify(result.components)
                     if dart_qualifier is not None:
                         dart_qualifier.qualify(result.components)
-                    # Disambiguate overloaded functions/methods within this file
-                    # before insert — two overloads share an id otherwise and the
-                    # catalog is last-write-wins. Runs after the ruby/dart
-                    # qualifiers (which finalize ids) and after any parser-level
-                    # receiver qualification.
+                    # Disambiguate same-scope same-name collisions within this
+                    # file before insert — function overloads, and a property/
+                    # field that shares a name with a function in one class —
+                    # otherwise they build the same id and the catalog is
+                    # last-write-wins. Runs after the ruby/dart qualifiers (which
+                    # finalize ids) and after any parser-level receiver qualification.
                     #
                     # V2 only: the id changes here, so legacy V1 spaces are left
                     # untouched to keep delta-refresh ids matching the persisted
                     # ones. They adopt this on a deliberate full V2 reindex.
                     if id_scheme == IdScheme.V2_PATH:
-                        self._disambiguate_overloads(result.components)
+                        self._disambiguate_colliding_ids(result.components)
                     for component in result.components:
                         self._component_repository.add_component(component)
 
@@ -412,32 +413,61 @@ class CodeAnalyzer:
         """
         return self._component_repository.get_statistics()
 
-    # Component kinds that can legitimately repeat a name in one scope (method
-    # overloads, overloaded top-level/free functions). Restricted to leaves so
-    # renaming an id never orphans a child that embeds it as a parent prefix.
+    # Function-like kinds that can legitimately repeat a name in one scope
+    # (method overloads, overloaded top-level/free functions).
     _OVERLOADABLE = frozenset(
         {ComponentType.METHOD, ComponentType.FUNCTION, ComponentType.CONSTRUCTOR}
     )
 
-    def _disambiguate_overloads(self, components: List["Component"]) -> None:
-        """Make overloaded functions/methods unique within one file in place.
+    # Property-like leaf kinds. A field/property carries the same ComponentType
+    # as a plain variable/constant (there is no dedicated PROPERTY type), so
+    # these are what collides with a same-named function in one class.
+    _PROPERTY_LIKE = frozenset({ComponentType.VARIABLE, ComponentType.CONSTANT})
 
-        Two overloads (`Save(User)` / `Save(User,bool)`) build the same id, and
-        the catalog keeps only the last — the rest lose their source, calls,
-        description and vector. Here we append ``DISAMBIG_SEP`` and a short hash
-        of the normalized signature to each colliding id (``Save#a1b2``).
-        ``get_simple_name`` strips it, so call resolution still keys on the real
-        name. Non-colliding ids are untouched.
+    # Leaf kinds whose id this routine may rewrite. All are leaves — nothing
+    # chains a child onto them as a parent prefix — EXCEPT a variable/constant a
+    # parser nests members under (e.g. a JS object literal assigned to a const).
+    # The parent-id guard in _disambiguate_colliding_ids protects those.
+    _DISAMBIGUATABLE = _OVERLOADABLE | _PROPERTY_LIKE
+
+    def _disambiguate_colliding_ids(self, components: List["Component"]) -> None:
+        """Make same-scope same-name components unique within one file in place.
+
+        Two members that build the same id collide in the catalog, which is
+        last-write-wins: the loser silently loses its source, calls, description
+        and vector, and WHICH one loses depends on declaration order. This covers
+        two collision shapes:
+
+        - function overloads (`Save(User)` / `Save(User,bool)`) — each colliding
+          id gets a short hash of its normalized signature (`Save#a1b2`);
+        - a property/field and a function of the same name in one class
+          (`val bar` / `fun bar()`) — the property-like member gets its kind as
+          the discriminator (`bar#variable`), while a lone function keeps its id.
+
+        ``get_simple_name`` strips the ``#…`` discriminator, so call resolution
+        still keys on the bare name. Non-colliding ids are untouched. An id used
+        as a parent prefix is never rewritten, so a member nested under a
+        colliding id (e.g. a JS object-literal method under a const) is not
+        orphaned.
+
+        Cross-file and cross-class collisions cannot occur under V2: the id
+        already carries the path-hashed file prefix and the enclosing-class
+        chain, so grouping by exact id within one file catches every real
+        collision and nothing spurious.
         """
-        import hashlib
         from collections import defaultdict
+
+        # Ids referenced as a parent prefix must keep their exact string, or the
+        # children that embed them orphan. parent_component holds local ids at
+        # this stage, matching comp.id.
+        parent_ids = {c.parent_component for c in components if c.parent_component}
 
         groups: Dict[str, List["Component"]] = defaultdict(list)
         for comp in components:
-            if comp.type in self._OVERLOADABLE:
+            if comp.type in self._DISAMBIGUATABLE:
                 groups[comp.id].append(comp)
 
-        for comp_id, group in groups.items():
+        for group in groups.values():
             if len(group) < 2:
                 continue
             # C/C++ prototype-vs-definition sharing an id is a deliberate merge
@@ -445,22 +475,44 @@ class CodeAnalyzer:
             if all(c.language in ("c", "cpp") for c in group):
                 continue
 
+            overloadable = [c for c in group if c.type in self._OVERLOADABLE]
             used: set[str] = set()
             for comp in group:
-                sig = " ".join((comp.attributes.signature or "").split())
-                if sig:
-                    disc = hashlib.sha1(sig.encode("utf-8")).hexdigest()[:4]
-                else:
-                    disc = f"p{len(comp.attributes.parameters)}"  # arity fallback
-                # Guarantee uniqueness even if two signatures normalize equal.
+                # Never rewrite an id another component nests under.
+                if comp.id in parent_ids:
+                    continue
+                # A lone function colliding only with a property keeps its id, so
+                # the usual call target stays stable and the property carries the
+                # discriminator. Multiple overloads still each get one.
+                if comp.type in self._OVERLOADABLE and len(overloadable) < 2:
+                    continue
+                disc = self._collision_discriminator(comp)
+                # Guarantee uniqueness even if two members produce equal discriminators.
                 unique = disc
                 n = 1
                 while unique in used:
                     n += 1
                     unique = f"{disc}{n}"
                 used.add(unique)
-
                 comp.id = f"{comp.id}{DISAMBIG_SEP}{unique}"
+
+    def _collision_discriminator(self, comp: "Component") -> str:
+        """Discriminator appended after ``DISAMBIG_SEP`` for one colliding member.
+
+        A function/method/constructor uses a short hash of its normalized
+        signature (an arity fallback when it has none). A property-like member
+        uses its kind (`variable`/`constant`) — a word that can never equal a hex
+        signature hash, so a property and a function in one collision group always
+        land on distinct ids regardless of declaration order.
+        """
+        import hashlib
+
+        if comp.type in self._OVERLOADABLE:
+            sig = " ".join((comp.attributes.signature or "").split())
+            if sig:
+                return hashlib.sha1(sig.encode("utf-8")).hexdigest()[:4]
+            return f"p{len(comp.attributes.parameters)}"  # arity fallback
+        return comp.type.value  # "variable" / "constant"
 
     def _analyze_file(self, file_path: Path) -> ParseResult:
         """

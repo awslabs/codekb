@@ -316,3 +316,42 @@ def test_stale_callers_stop_at_the_prompt_hop_limit():
     orch._step_merge()
 
     assert orch._refresh_plan.stale_caller_ids == frozenset({"space::S.c", "space::S.b"})
+
+
+def test_refresh_recovers_field_lost_to_old_collision_without_disrupting_method():
+    """A space indexed before the property/function collision fix holds only the
+    surviving method under the bare id `Foo.bar`; the field was dropped by
+    last-write-wins. When Foo.java is re-parsed under the fix, the method keeps
+    its bare id and the field reappears as `Foo.bar#variable`. The method is
+    neither re-summarized nor its vector deleted — only the recovered field is new.
+    """
+    prior_kb = KnowledgeBase(
+        source_directory=Path("/repo"),
+        space_id="space",
+        components=[
+            _comp("space::Foo.bar", "Foo.java", content_hash="hm", desc="returns the bar value"),
+        ],
+        call_graph={},
+    )
+    orch = _make_orchestrator(prior_kb)
+    orch._file_changes = [FileChange("Foo.java", ChangeType.MODIFIED)]
+    fresh_method = _comp("space::Foo.bar", "Foo.java", content_hash="hm")  # unchanged
+    fresh_field = _comp(
+        "space::Foo.bar#variable",
+        "Foo.java",
+        content_hash="hv",
+        comp_type=ComponentType.VARIABLE,
+    )
+    orch._parsed_components = [fresh_method, fresh_field]
+    orch._step_merge()
+    plan = orch._refresh_plan
+
+    # The method's prior description is carried forward (hash-preserved) ...
+    assert fresh_method.business_behavior.description == "returns the bar value"
+    # ... so it is neither re-summarized nor re-embedded, and the recovered field
+    # (a non-callable) adds no summarization work.
+    assert plan.changed_component_ids == frozenset()
+    # The method id reappears in the fresh parse, so its vector is NOT deleted;
+    # the recovered field is a brand-new id.
+    assert plan.vectors_to_delete == frozenset()
+    assert plan.evicted_component_ids == frozenset({"space::Foo.bar"})
